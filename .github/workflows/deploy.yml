@@ -15,7 +15,8 @@ jobs:
         run: |
           cd /home/aosy/Docker/AI-Alice
           git config --global --add safe.directory /home/aosy/Docker/AI-Alice
-          git pull origin main
+          # Pull with token authentication
+          git pull https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Aosy0/AI-Alice.git main
       
       - name: Rebuild containers
         run: |
