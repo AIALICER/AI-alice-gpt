@@ -1,6 +1,6 @@
 # 🎮 天童アリス Discord Bot
 
-天真爛漫な明るい女の子「天童アリス」のDiscord Botです。Google Gemini 2.0 Flash APIを使用して、アリスのキャラクターになりきって会話します。
+ブルーアーカイブ「天童アリス」のDiscord Botです。Google Gemini 3 Flash APIを使用して、アリスのキャラクターになりきって会話します。
 
 ## ✨ 機能
 
