@@ -1,18 +1,26 @@
-# 環境変数（機密情報を含む）
+# Environment variables
 .env
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
 venv/
 .venv/
+env/
 
-# Docker（個人サーバー専用環境のため除外）
-Dockerfile
-compose.yaml
+# Docker
+docker-compose.override.yml
 
-# 個人環境の画像ファイル
-assets/
+# Documentation & Setup files (Exclude from GitHub)
+*.md
+!README.md
+CLOUDFLARE_TUNNEL_SETUP.md
+DEPLOYMENT.md
+setup-runner.sh
+deploy.sh
+github-runner-compose.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
