@@ -11,28 +11,6 @@ jobs:
     runs-on: self-hosted  # Self-hosted runnerで実行
     
     steps:
-      - name: Check current directory
+      - name: Execute deployment script on host
         run: |
-          echo "Current directory: $(pwd)"
-          echo "User: $(whoami)"
-      
-      - name: Configure Git safe directory
-        run: |
-          git config --global --add safe.directory /home/aosy/Docker/AI-Alice
-      
-      - name: Pull latest changes
-        run: |
-          cd /home/aosy/Docker/AI-Alice
-          git pull origin main
-      
-      - name: Rebuild and restart Docker containers
-        run: |
-          cd /home/aosy/Docker/AI-Alice
-          docker compose down
-          docker compose up -d --build
-      
-      - name: Show deployment status
-        run: |
-          echo "✅ Deployment completed at $(date)"
-          cd /home/aosy/Docker/AI-Alice
-          docker compose ps
+          bash /home/aosy/Docker/AI-Alice/deploy.sh
