@@ -11,20 +11,20 @@ jobs:
     runs-on: self-hosted  # Self-hosted runnerで実行
     
     steps:
-      - name: Deploy AI-Alice using host Docker CLI
+      - name: Pull latest code
         run: |
-          # Alpine Linuxコンテナを使ってホスト上のDockerコマンドを実行
-          /usr/bin/docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /home/aosy/Docker/AI-Alice:/workspace \
-            -v /usr/bin/docker:/usr/bin/docker \
-            -w /workspace \
-            --entrypoint sh \
-            alpine:latest -c "\
-              apk add --no-cache git bash && \
-              git pull origin main && \
-              /usr/bin/docker compose down && \
-              /usr/bin/docker compose up -d --build && \
-              echo '✅ Deployment completed!' && \
-              /usr/bin/docker compose ps"
-
+          cd /home/aosy/Docker/AI-Alice
+          git config --global --add safe.directory /home/aosy/Docker/AI-Alice
+          git pull origin main
+      
+      - name: Rebuild containers
+        run: |
+          cd /home/aosy/Docker/AI-Alice
+          docker compose down
+          docker compose up -d --build
+      
+      - name: Show status
+        run: |
+          echo "✅ Deployment completed at $(date)"
+          cd /home/aosy/Docker/AI-Alice
+          docker compose ps

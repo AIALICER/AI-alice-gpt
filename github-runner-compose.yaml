@@ -19,10 +19,15 @@ services:
       - RUNNER_WORKDIR=/tmp/github-runner
       
       # ラベル（カスタマイズ可能）
-      - LABELS=docker,self-hosted,linux,ai-alice
+      - LABELS=docker,self-hosted,linux,ai-alice,dind
       
       # Runner グループ（デフォルト: Default）
       - RUNNER_GROUP=Default
+      
+      # Docker-in-Dockerを有効化
+      - DOCKER_ENABLED=true
+    
+    privileged: true  # Docker-in-Dockerに必要
     
     volumes:
       # Dockerコマンドを実行できるようにする
@@ -30,9 +35,6 @@ services:
       
       # プロジェクトディレクトリをマウント
       - /home/aosy/Docker/AI-Alice:/home/aosy/Docker/AI-Alice
-      
-      # Dockerバイナリをマウント（ホストのDockerを使用）
-      - /usr/bin/docker:/usr/bin/docker
     
     restart: unless-stopped
     
