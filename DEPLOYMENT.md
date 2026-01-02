@@ -2,6 +2,76 @@
 
 このドキュメントは、GitHub上のコードが変更されたときに自動的にサーバーにデプロイする設定手順を説明します。
 
+## ⚠️ Cloudflare Tunnel環境の場合
+
+ポート開放ができない環境では、**Self-hosted Runner**の使用を推奨します。
+詳細は下記の「Self-hosted Runnerを使用する方法」を参照してください。
+
+---
+
+## 方法A: Self-hosted Runnerを使用（Cloudflare Tunnel環境推奨）
+
+SSH接続不要で、サーバー上で直接デプロイを実行します。
+
+### A-1. GitHub Personal Access Tokenを作成
+
+1. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. `Generate new token (classic)` をクリック
+3. 設定:
+   - **Note**: `AI-Alice Self-hosted Runner`
+   - **Expiration**: `No expiration` または適切な期限
+   - **Scopes**: `repo` (Full control of private repositories) にチェック
+4. `Generate token` をクリックしてトークンをコピー
+
+### A-2. Docker ComposeでRunnerを起動（推奨）
+
+```bash
+cd /home/aosy/Docker/AI-Alice
+
+# 環境変数ファイルに追加
+echo "GITHUB_TOKEN=your_github_token_here" >> .env
+
+# Runnerコンテナを起動
+docker compose -f github-runner-compose.yaml up -d
+```
+
+### A-3. 手動でRunnerをセットアップ（代替方法）
+
+```bash
+cd /home/aosy/Docker/AI-Alice
+
+# GitHubから登録トークンを取得
+# https://github.com/Aosy0/AI-Alice/settings/actions/runners/new
+
+# セットアップスクリプトを実行
+./setup-runner.sh <GITHUB_TOKEN>
+```
+
+### A-4. ワークフローファイルの確認
+
+`.github/workflows/deploy.yml` が既に作成されています。
+このファイルは `runs-on: self-hosted` を使用しているため、Self-hosted Runnerで実行されます。
+
+### A-5. 動作確認
+
+1. コードを変更してプッシュ:
+   ```bash
+   git add .
+   git commit -m "Test deployment"
+   git push origin main
+   ```
+
+2. GitHub Repository の `Actions` タブで実行状況を確認
+
+3. Runnerのログを確認（Docker Compose使用時）:
+   ```bash
+   docker logs -f github-runner-ai-alice
+   ```
+
+---
+
+## 方法B: SSH経由でデプロイ（直接SSH接続可能な場合）
+
 ## 1. 生成されたSSH鍵
 
 SSH鍵ペアは既に生成済みです：

@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  github-runner:
+    image: myoung34/github-runner:latest
+    container_name: github-runner-ai-alice
+    environment:
+      # GitHubリポジトリURL
+      - REPO_URL=https://github.com/Aosy0/AI-Alice
+      
+      # Runner名
+      - RUNNER_NAME=ai-alice-docker-runner
+      
+      # GitHubのPersonal Access Token（Settings → Developer settings → Personal access tokens）
+      # 必要なスコープ: repo (Full control of private repositories)
+      - ACCESS_TOKEN=${GITHUB_TOKEN}
+      
+      # ワークディレクトリ
+      - RUNNER_WORKDIR=/tmp/github-runner
+      
+      # ラベル（カスタマイズ可能）
+      - LABELS=docker,self-hosted,linux,ai-alice
+      
+      # Runner グループ（デフォルト: Default）
+      - RUNNER_GROUP=Default
+    
+    volumes:
+      # Dockerコマンドを実行できるようにする
+      - /var/run/docker.sock:/var/run/docker.sock
+      
+      # プロジェクトディレクトリをマウント
+      - /home/aosy/Docker/AI-Alice:/home/aosy/Docker/AI-Alice
+      
+      # Dockerバイナリをマウント（ホストのDockerを使用）
+      - /usr/bin/docker:/usr/bin/docker
+    
+    restart: unless-stopped
+    
+    networks:
+      - default
+
+networks:
+  default:
+    name: ai-alice-network

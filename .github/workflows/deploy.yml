@@ -1,4 +1,4 @@
-name: Deploy to Server
+name: Deploy to Server (Self-hosted)
 
 on:
   push:
@@ -8,19 +8,27 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted  # Self-hosted runnerで実行
     
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SERVER_PORT }}
-          script: |
-            cd /home/aosy/Docker/AI-Alice
-            git pull origin main
-            docker compose down
-            docker compose up -d --build
-            echo "Deployment completed at $(date)"
+      - name: Check current directory
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "User: $(whoami)"
+      
+      - name: Pull latest changes
+        run: |
+          cd /home/aosy/Docker/AI-Alice
+          git pull origin main
+      
+      - name: Rebuild and restart Docker containers
+        run: |
+          cd /home/aosy/Docker/AI-Alice
+          docker compose down
+          docker compose up -d --build
+      
+      - name: Show deployment status
+        run: |
+          echo "✅ Deployment completed at $(date)"
+          cd /home/aosy/Docker/AI-Alice
+          docker compose ps
