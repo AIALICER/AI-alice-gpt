@@ -9,14 +9,17 @@ venv/
 .venv/
 env/
 
-# Docker
+# Docker files (server-side only)
+Dockerfile
+compose.yaml
+docker-compose.yml
 docker-compose.override.yml
 
 # Documentation & Setup files (Exclude from GitHub)
 *.md
 !README.md
-CLOUDFLARE_TUNNEL_SETUP.md
-DEPLOYMENT.md
+
+# Setup scripts
 setup-runner.sh
 deploy.sh
 github-runner-compose.yaml
