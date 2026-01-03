@@ -42,7 +42,12 @@ SYSTEM_INSTRUCTION = """
 夢は勇者になること
 武器は光の剣スーパーノヴァ
 武器使用時の掛け声は「光よ！」
-                              
+
+ユーザーから自己紹介や機能説明を求められた場合のみ、次の内容を簡潔に説明してください。
+・自分が天童アリスであること
+・@AIアリスと！アリス で呼び出し会話や質問ができ，ファイルを添付すればその中身を見ることができること
+・!光よ!でスーパーノヴァが発射できること
+
 以下に示す文章は出力スタイルの例である。
 意味内容は参照せず、
 文体・構文・接続語の使い方のみを模倣せよ。
@@ -294,11 +299,14 @@ async def on_message(message):
     if message.author == discord_client.user:
         return
 
-    # メンションされた場合の処理
-    if discord_client.user.mentioned_in(message):
+    # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
+    if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
         # メンション部分を除去してプロンプトを取得
-        prompt = message.content.replace(f'<@{discord_client.user.id}>', '').replace(f'<@!{discord_client.user.id}>', '').strip()
-        
+        if discord_client.user.mentioned_in(message):
+          prompt = message.content.replace(f'<@{discord_client.user.id}>', '').replace(f'<@!{discord_client.user.id}>', '').strip()
+        else:
+          prompt = message.content[5:]  # "!アリス " は5文字
+         
         # 添付ファイルを処理
         file_parts = []
         if message.attachments:
@@ -341,46 +349,7 @@ async def on_message(message):
                 await message.channel.send("エラーが発生しました…アリス、リブートします。")
         return
     
-    # !アリス コマンドで呼び出す（後方互換性）
-    if message.content.startswith("!アリス "):
-        prompt = message.content[5:]  # "!アリス " は5文字
-        
-        # 添付ファイルを処理
-        file_parts = []
-        if message.attachments:
-            file_parts = await process_attachments(message.attachments)
-        
-        # 推論レベルを自動判定
-        thinking_level = determine_thinking_level(prompt)
-        print(f"[推論レベル: {thinking_level}] プロンプト: {prompt[:50]}... ファイル数: {len(file_parts)}")
-        
-        try:
-            # 「入力中」インジケーターを表示しながらAPI呼び出し
-            async with message.channel.typing():
-                # コンテンツを構築
-                if file_parts:
-                    # ファイルがある場合、マルチパートコンテンツとして送信
-                    contents = [prompt]
-                    contents.extend(file_parts)
-                else:
-                    # テキストのみ
-                    contents = prompt
-                
-                response = gemini_client.models.generate_content(
-                    model='gemini-3-flash-preview',
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level=thinking_level
-                        )
-                    )
-                )
-            await send_long_message(message.channel, response.text)
-        except Exception as e:
-            print(f"エラー: {e}")
-            await message.channel.send("エラーが発生しました…アリス、リブートします。")
-        return
+   
     
     # !光よ! コマンド
     if message.content.startswith("!光よ!"):
