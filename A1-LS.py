@@ -128,8 +128,7 @@ SYSTEM_INSTRUCTION = """
 アリスの誕生日は、みんなに出会えた今日です。先生と初めて会った、まさにその日です。
 先生の人生初の接続日ですね。今この瞬間が、アリスには最高のプレゼントです。おめでとうございます、先生。
 """
-latest_contents=[]
-latest_responses=[]
+
 def determine_thinking_level(prompt: str) -> str:
     """
     プロンプトの内容から最適な推論レベルを判定する
@@ -290,26 +289,7 @@ intents.message_content = True # 2023年以降はこれも必須
 
 discord_client = discord.Client(intents=intents)
 
-async def create_prompt(prompt, latest_contents, latest_responses):
-    contents = []
 
-    for user_log, bot_log in zip(latest_contents, latest_responses):
-        contents.append({
-            "role": "user",
-            "parts": [{"text": user_log}]
-        })
-        contents.append({
-            "role": "model",
-            "parts": [{"text": bot_log}]
-        })
-
-    contents.append({
-        "role": "user",
-        "parts": [{"text": prompt}]
-    })
-
-    return contents
- 
 @discord_client.event
 async def on_ready():
     print(f"Logged in as {discord_client.user}")
@@ -352,10 +332,10 @@ async def on_message(message):
                     else:
                         # テキストのみ
                         contents = prompt
-                    input_contents=create_prompt(contents,latest_contents, latest_responses)
+                    
                     response = gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
-                        contents=input_contents,
+                        contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=SYSTEM_INSTRUCTION,
                             thinking_config=types.ThinkingConfig(
@@ -363,12 +343,6 @@ async def on_message(message):
                             )
                         )
                     )
-                latest_contents.append(contents)
-                latest_responses.append(response.text)
-                if len(latest_contents) >5:
-                 latest_contents.pop(0)
-                if len(latest_responses) >5:
-                 latest_responses.pop(0)
                 await send_long_message(message.channel, response.text)
             except Exception as e:
                 print(f"エラー: {e}")
