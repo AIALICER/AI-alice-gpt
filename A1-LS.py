@@ -290,23 +290,36 @@ intents.message_content = True # 2023年以降はこれも必須
 
 discord_client = discord.Client(intents=intents)
 
-async def create_prompt(prompt, latest_contents, latest_responses):
+def create_prompt(prompt, latest_contents, latest_responses):
     contents = []
 
     for user_log, bot_log in zip(latest_contents, latest_responses):
-        contents.append({
-            "role": "user",
-            "parts": [{"text": user_log}]
-        })
+        if isinstance(user_log, list):
+             contents.append({
+                "role": "user",
+                "parts": user_log
+            })
+        else:
+            contents.append({
+                "role": "user",
+                "parts": [{"text": user_log}]
+            })
+            
         contents.append({
             "role": "model",
             "parts": [{"text": bot_log}]
         })
 
-    contents.append({
-        "role": "user",
-        "parts": [{"text": prompt}]
-    })
+    if isinstance(prompt, list):
+        contents.append({
+            "role": "user",
+            "parts": prompt
+        })
+    else:
+        contents.append({
+            "role": "user",
+            "parts": [{"text": prompt}]
+        })
 
     return contents
  
@@ -352,7 +365,7 @@ async def on_message(message):
                     else:
                         # テキストのみ
                         contents = prompt
-                    input_contents=await create_prompt(contents,latest_contents, latest_responses)
+                    input_contents=create_prompt(contents,latest_contents, latest_responses)
                     response =gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
