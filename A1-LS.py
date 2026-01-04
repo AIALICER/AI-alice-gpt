@@ -385,7 +385,7 @@ async def on_message(message):
                 await send_long_message(message.channel, response.text)
             except Exception as e:
                 print(f"エラー: {e}")
-                await message.channel.send("エラーが発生しました…アリス、リブートします。")
+                await message.channel.send(f"エラーが発生しました…アリス、リブートします。\n詳細: {e}")
         return
     
    
