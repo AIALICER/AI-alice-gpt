@@ -24,8 +24,8 @@ try:
 except FileNotFoundError:
     print("エラー！システムインストラクションファイルが見つかりません！")
     SYSTEM_INSTRUCTION = ""
-latest_contents=[]
-latest_responses=[]
+latest_contents={}
+latest_responses={}
 def determine_thinking_level(prompt: str) -> str:
     """
     プロンプトの内容から最適な推論レベルを判定する
@@ -227,7 +227,11 @@ async def on_ready():
 async def on_message(message):
     if message.author == discord_client.user:
         return
-
+    channel_id = message.channel.id
+    if channel_id not in latest_contents:
+        latest_contents[channel_id] = []
+    if channel_id not in latest_responses:
+        latest_responses[channel_id] = []
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
         # メンション部分を除去してプロンプトを取得
@@ -265,7 +269,7 @@ async def on_message(message):
                     else:
                         # テキストのみ
                         contents = prompt
-                    input_contents=create_prompt(contents,latest_contents, latest_responses)
+                    input_contents=create_prompt(contents,latest_contents[channel_id], latest_responses[channel_id])
                     response =gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
@@ -276,12 +280,13 @@ async def on_message(message):
                             )
                         )
                     )
-                latest_contents.append(contents)
-                latest_responses.append(response.text)
-                if len(latest_contents) >5:
-                 latest_contents.pop(0)
-                if len(latest_responses) >5:
-                 latest_responses.pop(0)
+                
+                latest_contents[channel_id].append(contents)
+                latest_responses[channel_id].append(contents)
+                if len(latest_contents[channel_id]) >6:
+                 latest_contents[channel_id].pop(0)
+                if len(latest_responses[channel_id]) >6:
+                 latest_responses[channel_id].pop(0)
                 await send_long_message(message.channel, response.text)
             except Exception as e:
                 print(f"エラー: {e}")
