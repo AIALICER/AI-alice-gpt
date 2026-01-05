@@ -227,19 +227,29 @@ async def on_ready():
 async def on_message(message):
     if message.author == discord_client.user:
         return
-    channel_id = message.channel.id
+    curent_channel_id = message.channel.id
+    channel_id=curent_channel_id
     if channel_id not in latest_contents:
         latest_contents[channel_id] = []
     if channel_id not in latest_responses:
         latest_responses[channel_id] = []
+    
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
+        
+        
         # メンション部分を除去してプロンプトを取得
         if discord_client.user.mentioned_in(message):
           prompt = message.content.replace(f'<@{discord_client.user.id}>', '').replace(f'<@!{discord_client.user.id}>', '').strip()
         else:
           prompt = message.content[5:]  # "!アリス " は5文字
-         
+        if message.channel_mentions:
+         channel_id= message.channel_mentions[0].id
+         prompt= prompt.replace(f'<#{channel_id}>', '')
+        if channel_id not in latest_contents:
+         latest_contents[channel_id] = []
+        if channel_id not in latest_responses:
+         latest_responses[channel_id] = []
         # 添付ファイルを処理
         file_parts = []
         if message.attachments:
@@ -281,12 +291,12 @@ async def on_message(message):
                         )
                     )
                 
-                latest_contents[channel_id].append(contents)
-                latest_responses[channel_id].append(contents)
-                if len(latest_contents[channel_id]) >6:
-                 latest_contents[channel_id].pop(0)
-                if len(latest_responses[channel_id]) >6:
-                 latest_responses[channel_id].pop(0)
+                latest_contents[curent_channel_id].append(contents)
+                latest_responses[curent_channel_id].append(contents)
+                if len(latest_contents[curent_channel_id]) >6:
+                 latest_contents[curent_channel_id].pop(0)
+                if len(latest_responses[curent_channel_id]) >6:
+                 latest_responses[curent_channel_id].pop(0)
                 await send_long_message(message.channel, response.text)
             except Exception as e:
                 print(f"エラー: {e}")
