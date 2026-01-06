@@ -186,6 +186,109 @@ def determine_thinking_level(prompt: str) -> str:
         # 長い文章 → high
         return 'high'
 
+
+async def determine_thinking_level_with_router(prompt: str, channel_id: int, has_attachments: bool = False) -> str:
+    """
+    Gemini 3 Flashを使用したRouter構成で推論レベルを判定する
+    
+    Args:
+        prompt: ユーザーからのプロンプト
+        channel_id: チャンネルID（会話履歴取得用）
+        has_attachments: 添付ファイルがあるかどうか
+    
+    Returns:
+        'low': 簡単な挨拶や短い応答（思考不要）
+        'medium': 通常の会話（軽い思考）
+        'high': 複雑な質問、コード、分析など（深い思考が必要）
+    """
+    
+    # 会話履歴を取得（直近4件まで）
+    history = get_recent_history(channel_id, limit=4)
+    
+    # 会話履歴をテキスト形式に変換
+    history_text = ""
+    if history:
+        history_lines = []
+        for msg in history:
+            role = "ユーザー" if msg["role"] == "user" else "アリス"
+            text = msg["parts"][0]["text"] if msg["parts"] else ""
+            # 履歴は要約（長すぎる場合は切り詰め）
+            if len(text) > 100:
+                text = text[:100] + "..."
+            history_lines.append(f"{role}: {text}")
+        history_text = "\n".join(history_lines)
+    
+    # Router用の分類プロンプト
+    router_prompt = f"""あなたはAIチャットボットの推論レベル分類器です。
+ユーザーの質問に対して、どの程度の思考深度が必要かを判定してください。
+
+## 分類基準
+
+**low（思考不要）**:
+- 簡単な挨拶（こんにちは、おはよう、ありがとう等）
+- 短い相槌や確認（OK、わかった、そうだね等）
+- 雑談的な軽いやり取り
+
+**medium（軽い思考）**:
+- 一般的な質問への回答
+- 簡単な情報提供
+- 日常会話の続き
+- 意見や感想を求められた場合
+
+**high（深い思考が必要）**:
+- コードやプログラミングに関する質問
+- 複雑な計算や分析
+- 詳細な説明や解説を求められた場合
+- 比較、理由の説明、仕組みの解説
+- 長文での回答が必要な質問
+- 創作やアイデア出し
+- 問題解決やトラブルシューティング
+
+## 会話履歴（参考）
+{history_text if history_text else "（なし）"}
+
+## 現在のユーザー入力
+{prompt if prompt else "（テキストなし、ファイル添付あり）"}
+
+{"※添付ファイルがあります" if has_attachments else ""}
+
+## 出力
+上記を踏まえ、推論レベルを low / medium / high のいずれか1単語のみで回答してください。"""
+
+    try:
+        # Gemini 3 Flashで高速分類
+        response = gemini_client.models.generate_content(
+            model='gemini-3-flash-preview',
+            contents=router_prompt,
+            config=types.GenerateContentConfig(
+                # 分類タスクなので最小限の思考で十分（'minimal'が最軽量）
+                thinking_config=types.ThinkingConfig(
+                    thinking_level='minimal'
+                ),
+                # 出力を短く制限
+                max_output_tokens=10,
+                temperature=0.1  # 一貫性のため低めに設定
+            )
+        )
+        
+        # 結果をパース
+        result = response.text.strip().lower()
+        
+        # 有効な値かチェック
+        if result in ['low', 'medium', 'high']:
+            print(f"[Router分類] レベル: {result}")
+            return result
+        else:
+            # パースできない場合はフォールバック
+            print(f"[Router分類] 不明な結果: {result}、フォールバック実行")
+            return determine_thinking_level(prompt)
+            
+    except Exception as e:
+        # エラー時はルールベースにフォールバック
+        print(f"[Router分類エラー] {e}、ルールベース判定にフォールバック")
+        return determine_thinking_level(prompt)
+
+
 async def process_attachments(attachments):
     """
     Discord の添付ファイルを処理してGemini APIで使える形式に変換
@@ -381,8 +484,12 @@ async def on_message(message):
         
         # プロンプトまたは添付ファイルがある場合のみ応答
         if prompt or file_parts:
-            # 推論レベルを自動判定（プロンプトがある場合のみ）
-            thinking_level = determine_thinking_level(prompt) if prompt else 'medium'
+            # Router構成で推論レベルを自動判定（Gemini 3 Flash使用）
+            thinking_level = await determine_thinking_level_with_router(
+                prompt=prompt if prompt else "",
+                channel_id=channel_id,
+                has_attachments=bool(file_parts)
+            )
             print(f"[推論レベル: {thinking_level}] プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}... ファイル数: {len(file_parts)}")
             
             try:
