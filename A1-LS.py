@@ -333,10 +333,7 @@ async def on_message(message):
         return
     curent_channel_id = message.channel.id
     channel_id=curent_channel_id
-    if channel_id not in latest_contents:
-        latest_contents[channel_id] = []
-    if channel_id not in latest_responses:
-        latest_responses[channel_id] = []
+    
     
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
