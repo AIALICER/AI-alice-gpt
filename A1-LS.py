@@ -3,6 +3,7 @@ from google import genai
 from google.genai import types
 import os
 import aiohttp
+from datetime import datetime, timedelta, timezone
 
 # 環境変数から取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -24,6 +25,27 @@ try:
 except FileNotFoundError:
     print("エラー！システムインストラクションファイルが見つかりません！")
     SYSTEM_INSTRUCTION = ""
+
+# 日本時間を取得する関数
+def get_japan_time() -> str:
+    """
+    現在の日本標準時（JST）を取得
+    
+    Returns:
+        str: 日本時間の文字列（例: "2026-01-06 20:18:48 (月曜日)"）
+    """
+    # JST = UTC+9
+    JST = timezone(timedelta(hours=9))
+    now_jst = datetime.now(JST)
+    
+    # 曜日を日本語で
+    weekdays = ['月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日', '日曜日']
+    weekday_jp = weekdays[now_jst.weekday()]
+    
+    # フォーマット
+    formatted_time = now_jst.strftime('%Y-%m-%d %H:%M:%S')
+    return f"{formatted_time} ({weekday_jp})"
+
 latest_contents={}
 latest_responses={}
 def determine_thinking_level(prompt: str) -> str:
@@ -270,11 +292,16 @@ async def on_message(message):
                         # テキストのみ
                         contents = prompt
                     input_contents=create_prompt(contents,latest_contents[channel_id], latest_responses[channel_id])
+                    
+                    # 現在の日本時間を取得してシステムインストラクションに追加
+                    current_jst = get_japan_time()
+                    enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
+                    
                     response =gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
                         config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_INSTRUCTION,
+                            system_instruction=enhanced_instruction,
                             thinking_config=types.ThinkingConfig(
                                 thinking_level=thinking_level
                             )
