@@ -4,7 +4,26 @@ from google.genai import types
 import os
 import aiohttp
 from datetime import datetime, timedelta, timezone
+import sqlite3
 
+# データベースに接続（ファイルがなければ作成される）
+conn = sqlite3.connect('alice_bot.db')
+cursor = conn.cursor()
+
+# チャンネルごとに履歴を保存するテーブルを作成
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER,
+    role TEXT,       -- 'user' か 'model'
+    content TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+''')
+
+# 変更を確定して閉じる
+conn.commit()
+conn.close()
 # 環境変数から取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEN_API_KEY = os.getenv("GEN_API_KEY")
@@ -45,7 +64,44 @@ def get_japan_time() -> str:
     # フォーマット
     formatted_time = now_jst.strftime('%Y-%m-%d %H:%M:%S')
     return f"{formatted_time} ({weekday_jp})"
-
+async def summarize_attachments(prompt, file_parts):
+    """
+    添付ファイルの内容を1行程度のテキストに要約する
+    """
+    if not file_parts:
+        return ""
+    
+    # 要約専用の短い命令
+    summary_instruction = (
+        "あなたは優秀なアシスタントです。提供された添付ファイル（画像や書類）の内容を、"
+        "後で思い返せるように「1行で」簡潔に説明してください。"
+        "例：富士山が写った青空の写真 / 請求書の内容が書かれたPDFファイル"
+    )
+    
+    try:
+        # 要約用のAPI呼び出し（flashを使えば高速・安価です）
+        summary_response = gemini_client.models.generate_content(
+            model='gemini-3-flash-preview',
+            contents=[prompt] + file_parts if prompt else file_parts,
+            config=types.GenerateContentConfig(
+                system_instruction=summary_instruction
+            )
+        )
+        return f" [ファイル要約: {summary_response.text.strip()}]"
+    except Exception as e:
+        print(f"要約生成エラー: {e}")
+        return " [ファイルが含まれています]"
+def save_message(channel_id, role, content):
+    conn = sqlite3.connect('alice_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    INSERT INTO chat_history (channel_id, role, content)
+    VALUES (?, ?, ?)
+    ''', (channel_id, role, content))
+    
+    conn.commit()
+    conn.close()
 latest_contents={}
 latest_responses={}
 def determine_thinking_level(prompt: str) -> str:
@@ -207,7 +263,32 @@ intents.messages = True
 intents.message_content = True # 2023年以降はこれも必須
 
 discord_client = discord.Client(intents=intents)
-
+def get_recent_history(channel_id, limit=6):
+    conn = sqlite3.connect('alice_bot.db')
+    # 辞書形式で取得できるように設定すると楽です
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # 最新のメッセージを古い順（会話の流れ通り）に取得
+    cursor.execute('''
+    SELECT role, content FROM (
+        SELECT role, content, timestamp FROM chat_history 
+        WHERE channel_id = ? 
+        ORDER BY timestamp DESC LIMIT ?
+    ) ORDER BY timestamp ASC
+    ''', (channel_id, limit))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Gemini APIが受け取れる辞書リストに変換
+    history = []
+    for row in rows:
+        history.append({
+            "role": row['role'],
+            "parts": [{"text": row['content']}]
+        })
+    return history
 def create_prompt(prompt, latest_contents, latest_responses):
     contents = []
 
@@ -268,10 +349,6 @@ async def on_message(message):
         if message.channel_mentions:
          channel_id= message.channel_mentions[0].id
          prompt= prompt.replace(f'<#{channel_id}>', '')
-        if channel_id not in latest_contents:
-         latest_contents[channel_id] = []
-        if channel_id not in latest_responses:
-         latest_responses[channel_id] = []
         # 添付ファイルを処理
         file_parts = []
         if message.attachments:
@@ -301,7 +378,17 @@ async def on_message(message):
                     else:
                         # テキストのみ
                         contents = prompt
-                    input_contents=create_prompt(contents,latest_contents[channel_id], latest_responses[channel_id])
+                    current_parts = []
+                    if prompt:
+                     current_parts.append({"text": prompt})
+                    if file_parts:
+                     current_parts.extend(file_parts)
+                    history = get_recent_history(channel_id, limit=6)
+                    #input_contents=create_prompt(contents,latest_contents[channel_id], latest_responses[channel_id])
+                    input_contents = history + [{
+                         "role": "user",
+                         "parts": current_parts
+                    }]
                     
                     # 現在の日本時間を取得してシステムインストラクションに追加
                     current_jst = get_japan_time()
@@ -318,12 +405,25 @@ async def on_message(message):
                         )
                     )
                 
-                latest_contents[curent_channel_id].append(contents)
-                latest_responses[curent_channel_id].append(response.text)
-                if len(latest_contents[curent_channel_id]) >6:
-                 latest_contents[curent_channel_id].pop(0)
-                if len(latest_responses[curent_channel_id]) >6:
-                 latest_responses[curent_channel_id].pop(0)
+                # --- on_message 内の response = ... の後あたり ---
+
+                #  1. Geminiからのメイン回答を取得
+                bot_response_text = response.text
+
+                # 2. 履歴保存用のユーザー発言を作成
+                # 画像がある場合は要約を付け加える
+                if file_parts:
+                  file_summary = await summarize_attachments(prompt, file_parts)
+                  save_user_text = f"{prompt}{file_summary}"
+                else:
+                  save_user_text = prompt
+
+                # 3. SQLiteへ保存（ここで保存関数を呼ぶ）
+                save_message(curent_channel_id, 'user', save_user_text)
+                save_message(curent_channel_id, 'model', bot_response_text)
+
+                # 4. (デバッグ用) どんな風に保存されたか表示
+                print(f"DB保存内容: {save_user_text}")
                 await send_long_message(message.channel, response.text)
             except Exception as e:
                 print(f"エラー: {e}")
