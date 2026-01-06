@@ -308,27 +308,20 @@ async def generate_content_with_fallback(client, primary_model, contents, config
     
     for model_name, is_primary in models_to_try:
         try:
-            # Gemini 2.5系の場合、ThinkingConfigをthinking_budgetに変換
+            # Gemini 2.5系の場合、ThinkingConfigを除外（SDKエラー回避のため基本設定のみ）
             if model_name.startswith('gemini-2.5'):
                 # system_instructionを取得
                 sys_instruct = None
                 if hasattr(config, 'system_instruction'):
                     sys_instruct = config.system_instruction
                 
-                # thinking_budgetを決定
-                thinking_budget = None
-                if hasattr(config, 'thinking_config') and config.thinking_config:
-                    thinking_level = getattr(config.thinking_config, 'thinking_level', 'medium')
-                    thinking_budget = thinking_level_to_budget.get(thinking_level, 8192)
-                
-                # 新しいconfigを構築
+                # 新しいconfigを構築（thinking_budgetはSDK未対応の可能性があるため除外）
                 new_config = types.GenerateContentConfig(
-                    system_instruction=sys_instruct,
-                    thinking_budget=thinking_budget
+                    system_instruction=sys_instruct
                 )
                 
                 if not is_primary:
-                    print(f"⚠️ レートリミット到達。{model_name} にフォールバックします（thinking_budget={thinking_budget}）")
+                    print(f"⚠️ レートリミット到達。{model_name} にフォールバックします（Thinking機能OFF）")
                 
                 return client.models.generate_content(
                     model=model_name,
