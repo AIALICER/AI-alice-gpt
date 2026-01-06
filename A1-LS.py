@@ -282,7 +282,83 @@ low / medium / high のいずれか1単語のみ"""
         return determine_thinking_level(prompt)
 
 
-
+async def generate_content_with_fallback(client, primary_model, contents, config):
+    """
+    APIレートリミット(429)発生時に自動フォールバックするラッパー関数
+    
+    フォールバック順序:
+    1. gemini-3-flash-preview
+    2. gemini-2.5-flash (ThinkingConfig → thinking_budget変換)
+    3. gemini-2.5-flash-lite (ThinkingConfig → thinking_budget変換)
+    """
+    # thinking_levelからthinking_budgetへの変換マップ
+    thinking_level_to_budget = {
+        'minimal': 512,
+        'low': 2048,
+        'medium': 8192,
+        'high': 24576
+    }
+    
+    fallback_chain = [
+        ('gemini-2.5-flash', False),      # 2段目: Gemini 2.5 Flash
+        ('gemini-2.5-flash-lite', False)  # 3段目: Gemini 2.5 Flash-Lite
+    ]
+    
+    models_to_try = [(primary_model, True)] + fallback_chain
+    
+    for model_name, is_primary in models_to_try:
+        try:
+            # Gemini 2.5系の場合、ThinkingConfigをthinking_budgetに変換
+            if model_name.startswith('gemini-2.5'):
+                # system_instructionを取得
+                sys_instruct = None
+                if hasattr(config, 'system_instruction'):
+                    sys_instruct = config.system_instruction
+                
+                # thinking_budgetを決定
+                thinking_budget = None
+                if hasattr(config, 'thinking_config') and config.thinking_config:
+                    thinking_level = getattr(config.thinking_config, 'thinking_level', 'medium')
+                    thinking_budget = thinking_level_to_budget.get(thinking_level, 8192)
+                
+                # 新しいconfigを構築
+                new_config = types.GenerateContentConfig(
+                    system_instruction=sys_instruct,
+                    thinking_budget=thinking_budget
+                )
+                
+                if not is_primary:
+                    print(f"⚠️ レートリミット到達。{model_name} にフォールバックします（thinking_budget={thinking_budget}）")
+                
+                return client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=new_config
+                )
+            else:
+                # Gemini 3系はそのままThinkingConfigを使用
+                if not is_primary:
+                    print(f"⚠️ レートリミット到達。{model_name} にフォールバックします")
+                
+                return client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config
+                )
+                
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                # 次のモデルへフォールバック
+                if model_name == models_to_try[-1][0]:
+                    # 全てのモデルで失敗した場合
+                    raise Exception(f"全てのモデルでレートリミット到達: {e}")
+                continue
+            else:
+                # 429以外のエラーはそのまま送出
+                raise e
+    
+    # ここには到達しないはずだが、念のため
+    raise Exception("予期しないエラー: フォールバックチェーンが完了しませんでした")
 
 
 async def process_attachments(attachments):
@@ -512,8 +588,8 @@ async def on_message(message):
                     current_jst = get_japan_time()
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
                     
-                    # 安全な呼び出し関数を使用（429エラー時はGemini 2.5 Flashに自動切り替え）
-                    response = await generate_content_safe(
+                    # レートリミット対応の呼び出し（3段階フォールバック）
+                    response = await generate_content_with_fallback(
                         client=gemini_client,
                         primary_model='gemini-3-flash-preview',
                         contents=input_contents,
@@ -522,8 +598,7 @@ async def on_message(message):
                             thinking_config=types.ThinkingConfig(
                                 thinking_level=thinking_level
                             )
-                        ),
-                        fallback_model='gemini-2.5-flash'
+                        )
                     )
                 
                     # 応答の取得と保存
