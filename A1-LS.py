@@ -71,6 +71,21 @@ def get_japan_time() -> str:
     # フォーマット
     formatted_time = now_jst.strftime('%Y-%m-%d %H:%M:%S')
     return f"{formatted_time} ({weekday_jp})"
+def clear_db_history(channel_id):
+    """
+    指定されたチャンネルの履歴をデータベースから削除する
+    """
+    try:
+        conn = sqlite3.connect('alice_bot.db')
+        cursor = conn.cursor()
+        # そのチャンネルのレコードをすべて削除
+        cursor.execute('DELETE FROM chat_history WHERE channel_id = ?', (channel_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"履歴削除エラー: {e}")
+        return False
 async def summarize_attachments(prompt, file_parts):
     """
     添付ファイルの内容を1行程度のテキストに要約する
@@ -340,7 +355,12 @@ async def on_message(message):
         return
     curent_channel_id = message.channel.id
     channel_id=curent_channel_id
-    
+    if message.content == "!アリス 履歴消去":
+        if clear_db_history(channel_id):       
+            await message.channel.send("了解です！このチャンネルの記憶をリセットしました！")
+        else:
+            await message.channel.send("ごめんなさい、履歴の消去に失敗しました…")
+        return
     
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
