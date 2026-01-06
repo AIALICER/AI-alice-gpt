@@ -9,6 +9,8 @@ venv/
 .venv/
 env/
 
+data/
+
 # Docker files (server-side only)
 Dockerfile
 compose.yaml

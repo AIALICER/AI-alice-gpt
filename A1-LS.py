@@ -6,8 +6,15 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
+# データベースの保存ディレクトリを確認・作成
+DB_DIR = 'data'
+if not os.path.exists(DB_DIR):
+    os.makedirs(DB_DIR)
+
+DB_PATH = os.path.join(DB_DIR, 'alice_bot.db')
+
 # データベースに接続（ファイルがなければ作成される）
-conn = sqlite3.connect('alice_bot.db')
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 # チャンネルごとに履歴を保存するテーブルを作成
@@ -92,7 +99,7 @@ async def summarize_attachments(prompt, file_parts):
         print(f"要約生成エラー: {e}")
         return " [ファイルが含まれています]"
 def save_message(channel_id, role, content):
-    conn = sqlite3.connect('alice_bot.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
     cursor.execute('''
@@ -264,7 +271,7 @@ intents.message_content = True # 2023年以降はこれも必須
 
 discord_client = discord.Client(intents=intents)
 def get_recent_history(channel_id, limit=6):
-    conn = sqlite3.connect('alice_bot.db')
+    conn = sqlite3.connect(DB_PATH)
     # 辞書形式で取得できるように設定すると楽です
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
