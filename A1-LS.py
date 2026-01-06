@@ -484,49 +484,39 @@ async def on_message(message):
         
         # プロンプトまたは添付ファイルがある場合のみ応答
         if prompt or file_parts:
-            # Router構成で推論レベルを自動判定（Gemini 3 Flash使用）
-            thinking_level = await determine_thinking_level_with_router(
-                prompt=prompt if prompt else "",
-                channel_id=channel_id,
-                has_attachments=bool(file_parts)
-            )
-            print(f"[推論レベル: {thinking_level}] プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}... ファイル数: {len(file_parts)}")
-            
-            try:
-                # 推論レベルが高い場合、先にメッセージを送信
-                if thinking_level == 'high':
-                    await message.channel.send("少し待ってください！アリスは思考中です…！")
+            # 即座に「入力中...」インジケーターを表示
+            async with message.channel.typing():
+                # Router構成で推論レベルを自動判定（Gemini 3 Flash使用）
+                thinking_level = await determine_thinking_level_with_router(
+                    prompt=prompt if prompt else "",
+                    channel_id=channel_id,
+                    has_attachments=bool(file_parts)
+                )
+                print(f"[推論レベル: {thinking_level}] プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}... ファイル数: {len(file_parts)}")
+                
+                try:
+                    # 推論レベルが高い場合、追加の思考中メッセージを送信
+                    if thinking_level == 'high':
+                        await message.channel.send("少し待ってください！アリスは思考中です…！")
 
-                # 「入力中」インジケーターを表示しながらAPI呼び出し
-                async with message.channel.typing():
                     # コンテンツを構築
-                    if file_parts:
-                        # ファイルがある場合、マルチパートコンテンツとして送信
-                        contents = []
-                        if prompt:
-                            # 文字列を直接追加
-                            contents.append(prompt)
-                        contents.extend(file_parts)
-                    else:
-                        # テキストのみ
-                        contents = prompt
                     current_parts = []
                     if prompt:
-                     current_parts.append({"text": prompt})
+                        current_parts.append({"text": prompt})
                     if file_parts:
-                     current_parts.extend(file_parts)
+                        current_parts.extend(file_parts)
+                    
                     history = get_recent_history(channel_id, limit=6)
-                    #input_contents=create_prompt(contents,latest_contents[channel_id], latest_responses[channel_id])
                     input_contents = history + [{
                          "role": "user",
                          "parts": current_parts
                     }]
                     
-                    # 現在の日本時間を取得してシステムインストラクションに追加
+                    # 現在の日本時間を取得
                     current_jst = get_japan_time()
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
                     
-                    response =gemini_client.models.generate_content(
+                    response = gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
                         config=types.GenerateContentConfig(
@@ -537,29 +527,24 @@ async def on_message(message):
                         )
                     )
                 
-                # --- on_message 内の response = ... の後あたり ---
+                    # 応答の取得と保存
+                    bot_response_text = response.text
 
-                #  1. Geminiからのメイン回答を取得
-                bot_response_text = response.text
+                    if file_parts:
+                        file_summary = await summarize_attachments(prompt, file_parts)
+                        save_user_text = f"{prompt}{file_summary}"
+                    else:
+                        save_user_text = prompt
 
-                # 2. 履歴保存用のユーザー発言を作成
-                # 画像がある場合は要約を付け加える
-                if file_parts:
-                  file_summary = await summarize_attachments(prompt, file_parts)
-                  save_user_text = f"{prompt}{file_summary}"
-                else:
-                  save_user_text = prompt
+                    save_message(curent_channel_id, 'user', save_user_text)
+                    save_message(curent_channel_id, 'model', bot_response_text)
 
-                # 3. SQLiteへ保存（ここで保存関数を呼ぶ）
-                save_message(curent_channel_id, 'user', save_user_text)
-                save_message(curent_channel_id, 'model', bot_response_text)
+                    print(f"DB保存内容: {save_user_text}")
+                    await send_long_message(message.channel, bot_response_text)
 
-                # 4. (デバッグ用) どんな風に保存されたか表示
-                print(f"DB保存内容: {save_user_text}")
-                await send_long_message(message.channel, response.text)
-            except Exception as e:
-                print(f"エラー: {e}")
-                await message.channel.send(f"エラーが発生しました…アリス、リブートします。\n詳細: {e}")
+                except Exception as e:
+                    print(f"エラー: {e}")
+                    await message.channel.send(f"エラーが発生しました…アリス、リブートします。\n詳細: {e}")
         return
     
     # !光よ! コマンド
