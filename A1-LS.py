@@ -319,7 +319,7 @@ async def on_message(message):
                     )
                 
                 latest_contents[curent_channel_id].append(contents)
-                latest_responses[curent_channel_id].append(contents)
+                latest_responses[curent_channel_id].append(response)
                 if len(latest_contents[curent_channel_id]) >6:
                  latest_contents[curent_channel_id].pop(0)
                 if len(latest_responses[curent_channel_id]) >6:
