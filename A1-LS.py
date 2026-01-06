@@ -102,8 +102,8 @@ def save_message(channel_id, role, content):
     
     conn.commit()
     conn.close()
-latest_contents={}
-latest_responses={}
+#latest_contents={}
+#latest_responses={}
 def determine_thinking_level(prompt: str) -> str:
     """
     プロンプトの内容から最適な推論レベルを判定する
@@ -289,6 +289,7 @@ def get_recent_history(channel_id, limit=6):
             "parts": [{"text": row['content']}]
         })
     return history
+"""
 def create_prompt(prompt, latest_contents, latest_responses):
     contents = []
 
@@ -321,7 +322,7 @@ def create_prompt(prompt, latest_contents, latest_responses):
         })
 
     return contents
- 
+""" 
 @discord_client.event
 async def on_ready():
     print(f"Logged in as {discord_client.user}")
