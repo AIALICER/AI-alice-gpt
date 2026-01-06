@@ -187,21 +187,43 @@ def determine_thinking_level(prompt: str) -> str:
         return 'high'
 
 
+async def generate_content_safe(client, primary_model, contents, config, fallback_model='gemini-2.5-flash'):
+    """
+    APIレートリミット(429)発生時にフォールバックモデルで再試行するラッパー関数
+    """
+    try:
+        return client.models.generate_content(
+            model=primary_model,
+            contents=contents,
+            config=config
+        )
+    except Exception as e:
+        # 429 RESOURCE_EXHAUSTED の場合
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            print(f"⚠️ {primary_model} のレートリミット到達。{fallback_model} にフォールバックします。")
+            
+            # フォールバック時はThinkingConfigなど特有の設定を除外して再構築
+            sys_instruct = None
+            if hasattr(config, 'system_instruction'):
+                sys_instruct = config.system_instruction
+            
+            new_config = types.GenerateContentConfig(
+                system_instruction=sys_instruct
+            )
+            
+            return client.models.generate_content(
+                model=fallback_model,
+                contents=contents,
+                config=new_config
+            )
+        else:
+            raise e
+
+
 async def determine_thinking_level_with_router(prompt: str, channel_id: int, has_attachments: bool = False) -> str:
     """
     Gemini 3 Flashを使用したRouter構成で推論レベルを判定する
-    
-    Args:
-        prompt: ユーザーからのプロンプト
-        channel_id: チャンネルID（会話履歴取得用）
-        has_attachments: 添付ファイルがあるかどうか
-    
-    Returns:
-        'low': 簡単な挨拶や短い応答（思考不要）
-        'medium': 通常の会話（軽い思考）
-        'high': 複雑な質問、コード、分析など（深い思考が必要）
     """
-    
     # 会話履歴を取得（直近4件まで）
     history = get_recent_history(channel_id, limit=4)
     
@@ -212,80 +234,51 @@ async def determine_thinking_level_with_router(prompt: str, channel_id: int, has
         for msg in history:
             role = "ユーザー" if msg["role"] == "user" else "アリス"
             text = msg["parts"][0]["text"] if msg["parts"] else ""
-            # 履歴は要約（長すぎる場合は切り詰め）
             if len(text) > 100:
                 text = text[:100] + "..."
             history_lines.append(f"{role}: {text}")
         history_text = "\n".join(history_lines)
     
-    # Router用の分類プロンプト
     router_prompt = f"""あなたはAIチャットボットの推論レベル分類器です。
 ユーザーの質問に対して、どの程度の思考深度が必要かを判定してください。
 
 ## 分類基準
+**low（思考不要）**: 簡単な挨拶、相槌、雑談
+**medium（軽い思考）**: 一般的な質問、日常会話、意見
+**high（深い思考が必要）**: コード、計算、分析、詳細解説、創作
 
-**low（思考不要）**:
-- 簡単な挨拶（こんにちは、おはよう、ありがとう等）
-- 短い相槌や確認（OK、わかった、そうだね等）
-- 雑談的な軽いやり取り
-
-**medium（軽い思考）**:
-- 一般的な質問への回答
-- 簡単な情報提供
-- 日常会話の続き
-- 意見や感想を求められた場合
-
-**high（深い思考が必要）**:
-- コードやプログラミングに関する質問
-- 複雑な計算や分析
-- 詳細な説明や解説を求められた場合
-- 比較、理由の説明、仕組みの解説
-- 長文での回答が必要な質問
-- 創作やアイデア出し
-- 問題解決やトラブルシューティング
-
-## 会話履歴（参考）
+## 会話履歴
 {history_text if history_text else "（なし）"}
 
-## 現在のユーザー入力
+## ユーザー入力
 {prompt if prompt else "（テキストなし、ファイル添付あり）"}
-
 {"※添付ファイルがあります" if has_attachments else ""}
 
 ## 出力
-上記を踏まえ、推論レベルを low / medium / high のいずれか1単語のみで回答してください。"""
+low / medium / high のいずれか1単語のみ"""
 
     try:
-        # Gemini 3 Flashで高速分類
+        # Routerはレートリミットにかかったら即座に辞書ベース判定へ（フォールバックなしで高速化）
         response = gemini_client.models.generate_content(
             model='gemini-3-flash-preview',
             contents=router_prompt,
             config=types.GenerateContentConfig(
-                # 分類タスクなので最小限の思考で十分（'minimal'が最軽量）
                 thinking_config=types.ThinkingConfig(
                     thinking_level='minimal'
                 ),
-                # 出力を短く制限
                 max_output_tokens=10,
-                temperature=0.1  # 一貫性のため低めに設定
+                temperature=0.1
             )
         )
         
-        # 結果をパース
         result = response.text.strip().lower()
-        
-        # 有効な値かチェック
         if result in ['low', 'medium', 'high']:
             print(f"[Router分類] レベル: {result}")
             return result
-        else:
-            # パースできない場合はフォールバック
-            print(f"[Router分類] 不明な結果: {result}、フォールバック実行")
-            return determine_thinking_level(prompt)
+        return determine_thinking_level(prompt)
             
     except Exception as e:
-        # エラー時はルールベースにフォールバック
-        print(f"[Router分類エラー] {e}、ルールベース判定にフォールバック")
+        print(f"[Router分類スキップ] {e} -> ルールベース判定を使用")
         return determine_thinking_level(prompt)
 
 
