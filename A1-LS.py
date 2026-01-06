@@ -34,11 +34,11 @@ conn.close()
 # 環境変数から取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEN_API_KEY = os.getenv("GEN_API_KEY")
-
+GEN_API_KEY="AIzaSyCD70eQpUXpWiPqVa29MSIKC07v8tcgxuU"
 # デバッグ: 環境変数の読み込み確認
 print("=== 環境変数デバッグ ===")
 print(f"DISCORD_TOKEN: {'設定済み' if DISCORD_TOKEN else '未設定'}")
-print(f"GEN_API_KEY: {'設定済み' if GEN_API_KEY else '未設定'}")
+print(f"GEN_API_KEY: {GEN_API_KEY if GEN_API_KEY else '未設定'}")
 print("=======================")
 
 # 新しいGoogle Gen AI Client
@@ -124,8 +124,6 @@ def save_message(channel_id, role, content):
     
     conn.commit()
     conn.close()
-#latest_contents={}
-#latest_responses={}
 def determine_thinking_level(prompt: str) -> str:
     """
     プロンプトの内容から最適な推論レベルを判定する
@@ -414,40 +412,6 @@ def get_recent_history(channel_id, limit=6):
             "parts": [{"text": row['content']}]
         })
     return history
-"""
-def create_prompt(prompt, latest_contents, latest_responses):
-    contents = []
-
-    for user_log, bot_log in zip(latest_contents, latest_responses):
-        if isinstance(user_log, list):
-             contents.append({
-                "role": "user",
-                "parts": user_log
-            })
-        else:
-            contents.append({
-                "role": "user",
-                "parts": [{"text": user_log}]
-            })
-            
-        contents.append({
-            "role": "model",
-            "parts": [{"text": bot_log}]
-        })
-
-    if isinstance(prompt, list):
-        contents.append({
-            "role": "user",
-            "parts": prompt
-        })
-    else:
-        contents.append({
-            "role": "user",
-            "parts": [{"text": prompt}]
-        })
-
-    return contents
-""" 
 @discord_client.event
 async def on_ready():
     print(f"Logged in as {discord_client.user}")
@@ -498,7 +462,24 @@ async def on_message(message):
                     # 推論レベルが高い場合、追加の思考中メッセージを送信
                     if thinking_level == 'high':
                         await message.channel.send("少し待ってください！アリスは思考中です…！")
+                    check_prompt = f"ユーザーの質問: 「{prompt}」\nこの質問に正確に答えるために、最新情報の検索は必要ですか？ 'YES' か 'NO' で答えてください。"
+                    check_response = gemini_client.models.generate_content(
+                       model='gemini-3-flash-preview',
+                       contents=check_prompt,
+                       config=types.GenerateContentConfig(
+                          system_instruction="あなたは検索が必要か判断する専門の司令官です。余計なことは言わずYESかNOのみ答えてください。",
+                          candidate_count=1,
+                          temperature=0.0 
+                         )
+                         
+                       )
+                    needs_search = "YES" in check_response.text.upper()
 
+                    # 2. 検索が必要なら先にメッセージを送る
+                    alice_tools = []
+                    if needs_search:
+                     await message.channel.send("アリス,検索中です！")
+                     
                     # コンテンツを構築
                     current_parts = []
                     if prompt:
@@ -515,16 +496,23 @@ async def on_message(message):
                     # 現在の日本時間を取得
                     current_jst = get_japan_time()
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
-                    
+                    if alice_tools:
+    # 検索時は思考機能をオフにする（500エラー回避）
+                     current_config = types.GenerateContentConfig(
+                      system_instruction=enhanced_instruction,
+                     tools=alice_tools,)
+                    else:
+    # 通常時は思考機能を有効にする
+                     current_config = types.GenerateContentConfig(
+                     system_instruction=enhanced_instruction,
+                      thinking_config=types.ThinkingConfig(
+                           thinking_level=thinking_level
+                       )
+                        )
                     response = gemini_client.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=enhanced_instruction,
-                            thinking_config=types.ThinkingConfig(
-                                thinking_level=thinking_level
-                            )
-                        )
+                        config=current_config
                     )
                 
                     # 応答の取得と保存
