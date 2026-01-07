@@ -34,7 +34,6 @@ conn.close()
 # 環境変数から取得
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEN_API_KEY = os.getenv("GEN_API_KEY")
-GEN_API_KEY="AIzaSyCD70eQpUXpWiPqVa29MSIKC07v8tcgxuU"
 # デバッグ: 環境変数の読み込み確認
 print("=== 環境変数デバッグ ===")
 print(f"DISCORD_TOKEN: {'設定済み' if DISCORD_TOKEN else '未設定'}")
