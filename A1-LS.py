@@ -477,7 +477,11 @@ async def on_message(message):
                     # 2. 検索が必要なら先にメッセージを送る
                     alice_tools = []
                     if needs_search:
-                     await message.channel.send("アリス,検索中です！")
+                     await message.channel.send("アリス、検索中です！")
+    # ここで実際に検索ツールをリストに追加する！
+                     alice_tools.append(
+                         types.Tool(google_search=types.GoogleSearch())
+                      )
                      
                     # コンテンツを構築
                     current_parts = []
@@ -496,19 +500,20 @@ async def on_message(message):
                     current_jst = get_japan_time()
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
                     if alice_tools:
-    # 検索時は思考機能をオフにする（500エラー回避）
                      current_config = types.GenerateContentConfig(
-                      system_instruction=enhanced_instruction,
-                     tools=alice_tools,)
+                      system_instruction=enhanced_instruction+ "\n\n【重要】最新情報のためにGoogle検索を使ってください。",
+                     tools=alice_tools,thinking_config=types.ThinkingConfig(
+                           thinking_level=thinking_level
+                       ))
+                     print("検索を実行\n")
                     else:
-    # 通常時は思考機能を有効にする
                      current_config = types.GenerateContentConfig(
                      system_instruction=enhanced_instruction,
                       thinking_config=types.ThinkingConfig(
                            thinking_level=thinking_level
                        )
                         )
-                    response = gemini_client.models.generate_content(
+                    response = await gemini_client.aio.models.generate_content(
                         model='gemini-3-flash-preview',
                         contents=input_contents,
                         config=current_config
