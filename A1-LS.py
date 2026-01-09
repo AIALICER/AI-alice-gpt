@@ -311,9 +311,10 @@ async def generate_content_with_fallback(client, primary_model, contents, config
                 sys_instruct = None
                 if hasattr(config, 'system_instruction'):
                     sys_instruct = config.system_instruction
-                
+                current_tools = getattr(config, 'tools', None)
                 # 新しいconfigを構築（thinking_budgetはSDK未対応の可能性があるため除外）
                 new_config = types.GenerateContentConfig(
+                    tools=current_tools,
                     system_instruction=sys_instruct
                 )
                 
