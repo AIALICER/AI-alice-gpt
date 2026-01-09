@@ -567,7 +567,8 @@ async def on_message(message):
                     if alice_tools:
                      current_config = types.GenerateContentConfig(
                       system_instruction=enhanced_instruction+ "\n\n【重要】最新情報のためにGoogle検索を使ってください。",
-                     tools=alice_tools,thinking_config=types.ThinkingConfig(
+                      tools=alice_tools,
+                      thinking_config=types.ThinkingConfig(
                            thinking_level=thinking_level
                        ))
                      print("検索を実行\n")
