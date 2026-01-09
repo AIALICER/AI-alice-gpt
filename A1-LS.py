@@ -37,7 +37,7 @@ GEN_API_KEY = os.getenv("GEN_API_KEY")
 # デバッグ: 環境変数の読み込み確認
 print("=== 環境変数デバッグ ===")
 print(f"DISCORD_TOKEN: {'設定済み' if DISCORD_TOKEN else '未設定'}")
-print(f"GEN_API_KEY: {GEN_API_KEY if GEN_API_KEY else '未設定'}")
+print(f"GEN_API_KEY: {'設定済み' if GEN_API_KEY else '未設定'}")
 print("=======================")
 
 # 新しいGoogle Gen AI Client
