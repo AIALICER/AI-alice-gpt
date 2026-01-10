@@ -123,65 +123,66 @@ def save_message(channel_id, role, content):
     
     conn.commit()
     conn.close()
-def determine_thinking_level(prompt: str) -> str:
+def determine_level_and_search_rule_based(prompt: str) -> dict | None:
     """
-    プロンプトの内容から最適な推論レベルを判定する
+    ルールベースで推論レベルと検索要否を判定する（案2）
+    明らかなケースのみ判定し、それ以外はNoneを返してAPI判定に委ねる
     
     Returns:
-        'low': 簡単な挨拶や短い応答
-        'medium': 通常の会話
-        'high': 複雑な質問、コード、計算など
+        dict: {'level': 'low/medium/high', 'search': True/False} または None（API判定が必要）
     """
-    # 複雑なタスクを示すキーワード
-    complex_keywords = [
-        'コード', 'プログラム', 'スクリプト', '実装', 'アルゴリズム', '計算', '数式',
-        '説明して', '詳しく', '分析', '比較', '違い', '理由',
-        'どうやって', 'なぜ', 'どのように', 'まとめ', 'レポート',
-        'code', 'program', 'script', 'implement', 'algorithm', 'calculate', 'explain',
-        'why', 'how', 'analyze', 'compare', 'difference', 'summary'
-    ]
-    
-    # 深い質問・学習を求めるパターン
-    deep_question_patterns = [
-        '教えて', 'について', 'とは', '解説', '仕組み', '原理',
-        'どういう', '意味', '定義', '概念', '理論',
-        '何のために', 'どこへ', '目的', '本質',
-        'teach', 'about', 'what is', 'explain', 'describe', 'define'
-    ]
-    
-    # 簡単な挨拶や応答パターン
-    simple_patterns = [
-        'こんにちは', 'おはよう', 'こんばんは', 'やあ', 'よろしく',
-        'ありがとう', 'OK', 'わかった', 'うん', 'そうだね',
-        'hello', 'hi', 'hey', 'thanks', 'ok', 'yeah'
-    ]
-    
     prompt_lower = prompt.lower()
     
-    # 1. 簡単な挨拶パターンを最初にチェック（優先）
-    if len(prompt) <= 20 and any(pattern in prompt_lower for pattern in simple_patterns):
-        return 'low'
+    # === 検索が必要なキーワード ===
+    search_required_keywords = [
+        '今日', '最新', 'ニュース', '天気', '現在', '株価', 'リアルタイム',
+        '速報', '今週', '今月', '昨日', 'トレンド', '為替', 'レート',
+        'today', 'latest', 'news', 'weather', 'current', 'now', 'trending'
+    ]
     
-    # 2. 複雑なキーワード → high
-    if any(keyword in prompt for keyword in complex_keywords):
-        return 'high'
+    # === 簡単な挨拶パターン（検索不要・low） ===
+    simple_greetings = [
+        'こんにちは', 'おはよう', 'こんばんは', 'やあ', 'よろしく',
+        'ありがとう', 'おやすみ', 'バイバイ', 'さようなら',
+        'hello', 'hi', 'hey', 'thanks', 'good morning', 'good night', 'bye'
+    ]
     
-    # 3. 深い質問パターン → high
-    if any(pattern in prompt for pattern in deep_question_patterns):
-        return 'high'
+    # === コード・技術系キーワード（検索不要・high） ===
+    code_keywords = [
+        'コード', 'プログラム', 'スクリプト', '実装', 'アルゴリズム', '関数',
+        'クラス', 'バグ', 'エラー', 'デバッグ', 'リファクタ',
+        'code', 'program', 'script', 'implement', 'algorithm', 'function',
+        'class', 'bug', 'error', 'debug', 'refactor', 'python', 'javascript'
+    ]
     
-    # 4. 疑問符「？」がある場合、少し複雑と判断
-    has_question_mark = '?' in prompt or '？' in prompt
+    # === 相槌・短い返答（検索不要・low） ===
+    simple_responses = [
+        'OK', 'ok', 'わかった', 'うん', 'そうだね', 'なるほど', 'いいね',
+        'yes', 'no', 'yeah', 'sure', 'got it'
+    ]
     
-    # 5. 文字数ベースの判定（上記パターンに該当しない場合）
-    if len(prompt) <= 30:
-        # 短いが疑問符がある → medium
-        return 'medium' if has_question_mark else 'low'
-    elif len(prompt) <= 100:
-        return 'medium'
-    else:
-        # 長い文章 → high
-        return 'high'
+    # 1. 短い挨拶 → low, 検索不要
+    if len(prompt) <= 20 and any(p in prompt_lower for p in simple_greetings):
+        print("[ルールベース判定] 挨拶パターン → low, 検索不要")
+        return {'level': 'low', 'search': False}
+    
+    # 2. 相槌・短い返答 → low, 検索不要
+    if len(prompt) <= 15 and any(p in prompt_lower for p in simple_responses):
+        print("[ルールベース判定] 相槌パターン → low, 検索不要")
+        return {'level': 'low', 'search': False}
+    
+    # 3. コード・技術系 → high, 検索不要
+    if any(kw in prompt_lower for kw in code_keywords):
+        print("[ルールベース判定] コード系パターン → high, 検索不要")
+        return {'level': 'high', 'search': False}
+    
+    # 4. 検索必須キーワード → high, 検索必要
+    if any(kw in prompt_lower for kw in search_required_keywords):
+        print("[ルールベース判定] 検索必須パターン → high, 検索必要")
+        return {'level': 'high', 'search': True}
+    
+    # 上記に該当しない場合はAPI判定が必要
+    return None
 
 
 async def generate_content_safe(client, primary_model, contents, config, fallback_model='gemini-2.5-flash'):
@@ -217,10 +218,22 @@ async def generate_content_safe(client, primary_model, contents, config, fallbac
             raise e
 
 
-async def determine_thinking_level_with_router(prompt: str, channel_id: int, has_attachments: bool = False) -> str:
+async def determine_level_and_search(prompt: str, channel_id: int, has_attachments: bool = False) -> dict:
     """
-    Gemini 3 Flashを使用したRouter構成で推論レベルを判定する
+    推論レベルと検索要否を統合判定する（案1 + 案2）
+    
+    1. まずルールベースで判定（API呼び出しなし）
+    2. 判定できない場合のみGemini APIで判定
+    
+    Returns:
+        dict: {'level': 'low/medium/high', 'search': True/False}
     """
+    # === 案2: ルールベースで事前判定 ===
+    rule_result = determine_level_and_search_rule_based(prompt)
+    if rule_result is not None:
+        return rule_result
+    
+    # === 案1: API統合判定（ルールベースで判定できなかった場合） ===
     # 会話履歴を取得（直近4件まで）
     history = get_recent_history(channel_id, limit=4)
     
@@ -236,13 +249,17 @@ async def determine_thinking_level_with_router(prompt: str, channel_id: int, has
             history_lines.append(f"{role}: {text}")
         history_text = "\n".join(history_lines)
     
-    router_prompt = f"""あなたはAIチャットボットの推論レベル分類器です。
-ユーザーの質問に対して、どの程度の思考深度が必要かを判定してください。
+    # 推論レベルと検索要否を同時に判定するプロンプト
+    router_prompt = f"""あなたはAIチャットボットの判定システムです。2つの項目を判定してください。
 
-## 分類基準
-**low（思考不要）**: 簡単な挨拶、相槌、雑談
-**medium（軽い思考）**: 一般的な質問、日常会話、意見
-**high（深い思考が必要）**: コード、計算、分析、詳細解説、創作
+## 判定1: 推論レベル
+- **low**: 簡単な挨拶、相槌、雑談
+- **medium**: 一般的な質問、日常会話、意見
+- **high**: コード、計算、分析、詳細解説、創作
+
+## 判定2: 検索の必要性
+- **true**: 最新情報、ニュース、天気、時事問題など外部情報が必要
+- **false**: 一般知識、コード、挨拶など検索不要
 
 ## 会話履歴
 {history_text if history_text else "（なし）"}
@@ -251,11 +268,13 @@ async def determine_thinking_level_with_router(prompt: str, channel_id: int, has
 {prompt if prompt else "（テキストなし、ファイル添付あり）"}
 {"※添付ファイルがあります" if has_attachments else ""}
 
-## 出力
-low / medium / high のいずれか1単語のみ"""
+## 出力形式（厳守）
+level:low/medium/high,search:true/false
+
+例: level:high,search:false
+例: level:medium,search:true"""
 
     try:
-        # Routerはレートリミットにかかったら即座に辞書ベース判定へ（フォールバックなしで高速化）
         response = gemini_client.models.generate_content(
             model='gemini-3-flash-preview',
             contents=router_prompt,
@@ -263,20 +282,34 @@ low / medium / high のいずれか1単語のみ"""
                 thinking_config=types.ThinkingConfig(
                     thinking_level='minimal'
                 ),
-                max_output_tokens=10,
+                max_output_tokens=30,
                 temperature=0.1
             )
         )
         
         result = response.text.strip().lower()
-        if result in ['low', 'medium', 'high']:
-            print(f"[Router分類] レベル: {result}")
-            return result
-        return determine_thinking_level(prompt)
+        print(f"[API統合判定] 結果: {result}")
+        
+        # パース: "level:high,search:false" 形式
+        level = 'medium'  # デフォルト
+        search = False    # デフォルト
+        
+        if 'level:' in result:
+            level_part = result.split('level:')[1].split(',')[0].strip()
+            if level_part in ['low', 'medium', 'high']:
+                level = level_part
+        
+        if 'search:' in result:
+            search_part = result.split('search:')[1].split(',')[0].strip()
+            search = search_part == 'true'
+        
+        print(f"[API統合判定] レベル: {level}, 検索: {search}")
+        return {'level': level, 'search': search}
             
     except Exception as e:
-        print(f"[Router分類スキップ] {e} -> ルールベース判定を使用")
-        return determine_thinking_level(prompt)
+        print(f"[API統合判定スキップ] {e} -> デフォルト値を使用")
+        # エラー時はデフォルト値（medium, 検索なし）
+        return {'level': 'medium', 'search': False}
 
 
 async def generate_content_with_fallback(client, primary_model, contents, config):
@@ -515,39 +548,28 @@ async def on_message(message):
         if prompt or file_parts:
             # 即座に「入力中...」インジケーターを表示
             async with message.channel.typing():
-                # Router構成で推論レベルを自動判定（Gemini 3 Flash使用）
-                thinking_level = await determine_thinking_level_with_router(
+                # 統合判定: 推論レベルと検索要否を同時に判定（案1 + 案2）
+                judgment = await determine_level_and_search(
                     prompt=prompt if prompt else "",
                     channel_id=channel_id,
                     has_attachments=bool(file_parts)
                 )
-                print(f"[推論レベル: {thinking_level}] プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}... ファイル数: {len(file_parts)}")
+                thinking_level = judgment['level']
+                needs_search = judgment['search']
+                print(f"[統合判定] レベル: {thinking_level}, 検索: {needs_search}, プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}...")
                 
                 try:
                     # 推論レベルが高い場合、追加の思考中メッセージを送信
                     if thinking_level == 'high':
                         await message.channel.send("少し待ってください！アリスは思考中です…！")
-                    check_prompt = f"ユーザーの質問: 「{prompt}」\nこの質問に正確に答えるために、最新情報の検索は必要ですか？ 'YES' か 'NO' で答えてください。"
-                    check_response = gemini_client.models.generate_content(
-                       model='gemini-3-flash-preview',
-                       contents=check_prompt,
-                       config=types.GenerateContentConfig(
-                          system_instruction="あなたは検索が必要か判断する専門の司令官です。余計なことは言わずYESかNOのみ答えてください。",
-                          candidate_count=1,
-                          temperature=0.0 
-                         )
-                         
-                       )
-                    needs_search = "YES" in check_response.text.upper()
-
-                    # 2. 検索が必要なら先にメッセージを送る
+                    
+                    # 検索が必要な場合、ツールを設定
                     alice_tools = []
                     if needs_search:
-                     await message.channel.send("アリス、検索中です！")
-    # ここで実際に検索ツールをリストに追加する！
-                     alice_tools.append(
-                         types.Tool(google_search=types.GoogleSearch())
-                      )
+                        await message.channel.send("アリス、検索中です！")
+                        alice_tools.append(
+                            types.Tool(google_search=types.GoogleSearch())
+                        )
                      
                     # コンテンツを構築
                     current_parts = []
@@ -566,19 +588,20 @@ async def on_message(message):
                     current_jst = get_japan_time()
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
                     if alice_tools:
-                     current_config = types.GenerateContentConfig(
-                      system_instruction=enhanced_instruction+ "\n\n【重要】最新情報のためにGoogle検索を使ってください。",
-                      tools=alice_tools,
-                      thinking_config=types.ThinkingConfig(
-                           thinking_level=thinking_level
-                       ))
-                     print("検索を実行\n")
+                        current_config = types.GenerateContentConfig(
+                            system_instruction=enhanced_instruction + "\n\n【重要】最新情報のためにGoogle検索を使ってください。",
+                            tools=alice_tools,
+                            thinking_config=types.ThinkingConfig(
+                                thinking_level=thinking_level
+                            )
+                        )
+                        print("検索を実行\n")
                     else:
-                     current_config = types.GenerateContentConfig(
-                     system_instruction=enhanced_instruction,
-                      thinking_config=types.ThinkingConfig(
-                           thinking_level=thinking_level
-                       )
+                        current_config = types.GenerateContentConfig(
+                            system_instruction=enhanced_instruction,
+                            thinking_config=types.ThinkingConfig(
+                                thinking_level=thinking_level
+                            )
                         )
                     # レートリミット対応の呼び出し（3段階フォールバック）
                     response = await generate_content_with_fallback(
