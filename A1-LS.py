@@ -6,6 +6,7 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import asyncio
+import look_db
 # データベースの保存ディレクトリを確認・作成
 DB_DIR = 'data'
 if not os.path.exists(DB_DIR):
@@ -639,7 +640,8 @@ async def on_message(message):
         else:
             await message.channel.send("ごめんなさい、履歴の消去に失敗しました…")
         return
-    
+    if message.content == "!ログ確認":
+        look_db.check_database()
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
         
