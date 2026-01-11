@@ -594,7 +594,6 @@ def get_memories(channel_id):
         ''', (channel_id,)) # 引数の末尾にカンマを忘れずに（タプル形式にするため）
     old_memory_row = cursor.fetchone()
     memory = old_memory_row[0] if old_memory_row else "まだ記憶はありません。"
-    print("b")
     conn.close()
     return memory
 def get_recent_history(channel_id, limit=6):
@@ -621,7 +620,6 @@ def get_recent_history(channel_id, limit=6):
             "role": row['role'],
             "parts": [{"text": row['content']}]
         })
-    print("a")
     return history
 
 @discord_client.event
