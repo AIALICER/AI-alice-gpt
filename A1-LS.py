@@ -341,6 +341,9 @@ async def determine_level_and_search(prompt: str, channel_id: int, has_attachmen
         for msg in history:
             role = "ユーザー" if msg["role"] == "user" else "アリス"
             text = msg["parts"][0]["text"] if msg["parts"] else ""
+            # textがNoneの場合は空文字列に変換
+            if text is None:
+                text = ""
             if len(text) > 100:
                 text = text[:100] + "..."
             history_lines.append(f"{role}: {text}")
