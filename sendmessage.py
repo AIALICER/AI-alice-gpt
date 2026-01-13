@@ -143,26 +143,31 @@ def determine_level_and_search_rule_based(prompt: str) -> dict | None:
         'OK', 'ok', 'わかった', 'うん', 'そうだね', 'なるほど', 'いいね',
         'yes', 'no', 'yeah', 'sure', 'got it'
     ]
-    
+    time_responses=[
+        '計って','計測して','タイマー','測って','たったら','経ったら'
+    ]
+    if any(kw in prompt_lower for kw in code_keywords):
+      print("[ルールベース判定]時間計測が必要なため，geminiによる必要時間の抜き取りが必要")
+      return None
     # 1. 短い挨拶 → low, 検索不要
     if len(prompt) <= 20 and any(p in prompt_lower for p in simple_greetings):
-        print("[ルールベース判定] 挨拶パターン → low, 検索不要")
-        return {'level': 'low', 'search': False}
+        print("[ルールベース判定] 挨拶パターン → low, 検索不要,時間計測不要")
+        return {'level': 'low', 'search': False,'minutes':0,'task':"null"}
     
     # 2. 相槌・短い返答 → low, 検索不要
     if len(prompt) <= 15 and any(p in prompt_lower for p in simple_responses):
-        print("[ルールベース判定] 相槌パターン → low, 検索不要")
-        return {'level': 'low', 'search': False}
+        print("[ルールベース判定] 相槌パターン → low, 検索不要，時間計測不要")
+        return {'level': 'low', 'search': False,'minutes':0,'task':"null"}
     
     # 3. コード・技術系 → high, 検索不要
     if any(kw in prompt_lower for kw in code_keywords):
-        print("[ルールベース判定] コード系パターン → high, 検索不要")
-        return {'level': 'high', 'search': False}
+        print("[ルールベース判定] コード系パターン → high, 検索不要,時間計測不要")
+        return {'level': 'high', 'search': False,'minutes':0,'task':"null"}
     
     # 4. 検索必須キーワード → high, 検索必要
     if any(kw in prompt_lower for kw in search_required_keywords):
-        print("[ルールベース判定] 検索必須パターン → high, 検索必要")
-        return {'level': 'high', 'search': True}
+        print("[ルールベース判定] 検索必須パターン → high, 検索必要,時間計測不要")
+        return {'level': 'high', 'search': True,'minutes':0,'task':"null"}
     
     # 上記に該当しない場合はAPI判定が必要
     return None
@@ -291,8 +296,16 @@ level:low/medium/high,search:true/false,minutes:int,task:str
             search = search_part == 'true'
         if 'minutes:' in result:
             minutes_part = result.split('minutes:')[1].split(',')[0].strip()
-            if minutes_part.isdigit():
-             minutes=int(minutes_part)
+            try:
+             # まず整数を試す
+             minutes=float(minutes_part)
+            except ValueError:
+             try:
+             # 整数がダメなら小数を試す
+              minutes=float(minutes_part)
+             except ValueError:
+            # どちらもダメならNone（または0）を返す
+              minutes=0
         if 'task' in result:
             task=result.split('task:')[1].split(',')[0].strip()
         print(f"[API統合判定] レベル: {level}, 検索: {search},時間{minutes},タイマーの要件{task}")
@@ -301,7 +314,7 @@ level:low/medium/high,search:true/false,minutes:int,task:str
     except Exception as e:
         print(f"[API統合判定スキップ] {e} -> デフォルト値を使用")
         # エラー時はデフォルト値（medium, 検索なし）
-        return {'level': 'medium', 'search': False}
+        return {'level': 'medium', 'search': False,'minutes':0,'task':"null"}
 def save_message(channel_id, role, content):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

@@ -1,13 +1,9 @@
 import discord
 from google import genai
 from google.genai import types
-import os
-import aiohttp
 from datetime import datetime, timedelta, timezone
-import sqlite3
 import asyncio
 import look_db
-import time
 import sendmessage
 import timeee
 from config import *
@@ -36,6 +32,7 @@ async def on_message(message):
         return
     curent_channel_id = message.channel.id
     channel_id=curent_channel_id
+    
     if message.content == "!アリス 履歴消去":
         if db_func.clear_db_history(channel_id):       
             await message.channel.send("了解です！このチャンネルの記憶をリセットしました！")
@@ -47,7 +44,11 @@ async def on_message(message):
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
     if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
         
-        
+        if "タイマー" in message.content and ("残り" in message.content or "状況" in message.content):
+          # timeeeファイルの関数を呼び出す
+          status_message = timeee.get_remaining_timers(message.channel.id)
+          await message.channel.send(status_message)
+          return # Geminiに聞かずにここで終わらせる
         # メンション部分を除去してプロンプトを取得
         if discord_client.user.mentioned_in(message):
           prompt = message.content.replace(f'<@{discord_client.user.id}>', '').replace(f'<@!{discord_client.user.id}>', '').strip()
@@ -76,8 +77,8 @@ async def on_message(message):
                 )
                 thinking_level = judgment['level']
                 needs_search = judgment['search']
-                #timer_second=judgment['minutes']
-                #timer_name=judgment['task']
+                timer_second=judgment['minutes']
+                timer_name=judgment['task']
                 print(f"[統合判定] レベル: {thinking_level}, 検索: {needs_search}, プロンプト: {prompt[:50] if prompt else '(ファイルのみ)'}...")
                 
                 try:
@@ -92,15 +93,23 @@ async def on_message(message):
                         alice_tools.append(
                             types.Tool(google_search=types.GoogleSearch())
                         )
-                     
+                    if timer_second!=0:
+                        t_name = str(timer_name) if timer_name else "タイマー"
+                        asyncio.create_task(timeee.set_timer(message.channel,timer_second,t_name))
                     # コンテンツを構築
                     current_parts = []
+                    syslog=""
+                    if timer_second != 0:
+                    #ユーザーの発言の直後に、システムからの隠しメッセージを添える
+                       syslog="\n\n[システム情報: タイマーを{timer_second}分で受け付けました。あなたは『了解しました』と設定完了の報告だけをしてください。何があっても時間経過が終わったかのように返信したりしないでください．またこの会話では，過去の会話を参考にして返信しないで下さい.]"
+                
                     if prompt:
-                        current_parts.append({"text": prompt})
+                        current_parts.append({"text": prompt+syslog})
                     if file_parts:
                         current_parts.extend(file_parts)
                     
                     history = sendmessage.get_recent_history(channel_id, limit=6)
+    
                     input_contents = history + [{
                          "role": "user",
                          "parts": current_parts
@@ -109,23 +118,20 @@ async def on_message(message):
                     memories=db_func.get_memories(channel_id)
                     # 現在の日本時間を取得
                     current_jst = timeee.get_japan_time()
+                    full_system_instruction=""
                     enhanced_instruction = f"{SYSTEM_INSTRUCTION}\n\n[現在の日本時間]\n{current_jst}"
                     if alice_tools:
-                        current_config = types.GenerateContentConfig(
-                            system_instruction=enhanced_instruction + "\n\n【重要】最新情報のためにGoogle検索を使ってください。"+ "\n\n以下はログより以前の会話履歴の要約です必要に応じて確認してください"+memories,
+                        full_system_instruction=enhanced_instruction + "\n\n【重要】最新情報のためにGoogle検索を使ってください。"+ "\n\n以下はログより以前の会話履歴の要約です必要に応じて確認してください"+memories
+                            
+                        print("検索を実行\n")
+                    else:
+                      full_system_instruction=enhanced_instruction+ "\n\n以下はログより以前の会話履歴の要約です必要に応じて確認してください"+memories
+                    current_config = types.GenerateContentConfig(
+                            system_instruction=full_system_instruction,
                             tools=alice_tools,
                             thinking_config=types.ThinkingConfig(
                                 thinking_level=thinking_level
-                            )
-                        )
-                        print("検索を実行\n")
-                    else:
-                        current_config = types.GenerateContentConfig(
-                            system_instruction=enhanced_instruction+ "\n\n以下はログより以前の会話履歴の要約です必要に応じて確認してください"+memories,
-                            thinking_config=types.ThinkingConfig(
-                                thinking_level=thinking_level
-                            )
-                        )
+                            ))
                     # レートリミット対応の呼び出し（3段階フォールバック）
                     response = await sendmessage.generate_content_with_fallback(
                         client=gemini_client,

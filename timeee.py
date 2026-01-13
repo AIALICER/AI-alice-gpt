@@ -22,11 +22,29 @@ async def set_timer(channel, minutes, task_name):
 
     try:
         await asyncio.sleep(minutes * 60)
-        await channel.send(f"🔔 時間ですよ！「{task_name}」の予定です。")
+        await channel.send(f"時間です！「{task_name}」の予定です!")
     finally:
         # 終わったらリストから消す
         if channel_id in active_timers:
             active_timers[channel_id] = [t for t in active_timers[channel_id] if t != timer_data]
+def get_remaining_timers(channel_id):
+    """指定したチャンネルのタイマー一覧を文字列で返す"""
+    if channel_id not in active_timers or not active_timers[channel_id]:
+        return "現在動いているタイマーはありません!"
+
+    lines = ["【現在稼働中のタイマー】"]
+    now = time.time()
+
+    for timer in active_timers[channel_id]:
+        remaining = timer["end_time"] - now
+        if remaining > 0:
+            minutes = int(remaining // 60)
+            seconds = int(remaining % 60)
+            lines.append(f"・{timer['task']}: 残り {minutes}分{seconds}秒")
+        else:
+            lines.append(f"・{timer['task']}: まもなく終了")
+
+    return "\n".join(lines)
 def get_japan_time() -> str:
     """
     現在の日本標準時（JST）を取得
