@@ -117,7 +117,7 @@ def clear_db_history(channel_id):
     指定されたチャンネルの履歴をデータベースから削除する
     """
     try:
-        conn = sqlite3.connect('alice_bot.db')
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         # そのチャンネルのレコードをすべて削除
         cursor.execute('DELETE FROM chat_history WHERE channel_id = ?', (channel_id,))
