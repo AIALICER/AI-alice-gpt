@@ -336,7 +336,10 @@ async def send_long_message(channel, text):
     """
     MAX_LENGTH = 2000
     CHUNK_LENGTH = 1900  # 安全マージンを持たせる
-    
+
+    if text is None:
+        text = "（応答が空でした）"
+
     if len(text) <= MAX_LENGTH:
         # 通常送信
         await channel.send(text)

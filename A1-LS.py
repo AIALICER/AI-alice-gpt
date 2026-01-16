@@ -141,7 +141,7 @@ async def on_message(message):
                     )
                 
                     # 応答の取得と保存
-                    bot_response_text = response.text
+                    bot_response_text = response.text if response and response.text is not None else "応答の生成に失敗しました。もう一度お試しください。"
 
                     if file_parts:
                         file_summary = await file_func.summarize_attachments(prompt, file_parts)
