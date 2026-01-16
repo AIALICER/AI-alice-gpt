@@ -92,8 +92,10 @@ def get_recent_history(channel_id, limit=6):
     SELECT role, content FROM (
         SELECT role, content, timestamp FROM chat_history 
         WHERE channel_id = ? 
-        ORDER BY timestamp ASC
-    ) ''', (channel_id,))
+        ORDER BY timestamp DESC
+        LIMIT ?
+    ) ORDER BY timestamp ASC
+    ''', (channel_id, limit))
     
     rows = cursor.fetchall()
     conn.close()
@@ -146,9 +148,9 @@ def determine_level_and_search_rule_based(prompt: str) -> dict | None:
     time_responses=[
         '計って','計測して','タイマー','測って','たったら','経ったら'
     ]
-    if any(kw in prompt_lower for kw in code_keywords):
-      print("[ルールベース判定]時間計測が必要なため，geminiによる必要時間の抜き取りが必要")
-      return None
+    if any(kw in prompt_lower for kw in time_responses):
+        print("[ルールベース判定]時間計測が必要なため，geminiによる必要時間の抜き取りが必要")
+        return None
     # 1. 短い挨拶 → low, 検索不要
     if len(prompt) <= 20 and any(p in prompt_lower for p in simple_greetings):
         print("[ルールベース判定] 挨拶パターン → low, 検索不要,時間計測不要")
