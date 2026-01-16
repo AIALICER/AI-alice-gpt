@@ -141,7 +141,31 @@ async def on_message(message):
                     )
                 
                     # 応答の取得と保存
-                    bot_response_text = response.text if response and response.text is not None else "応答の生成に失敗しました。もう一度お試しください。"
+                    print(f"[DEBUG] Response type: {type(response)}")
+                    print(f"[DEBUG] Response has text: {hasattr(response, 'text')}")
+                    
+                    # レスポンスからテキストを安全に取得
+                    bot_response_text = None
+                    try:
+                        if response and hasattr(response, 'text') and response.text:
+                            bot_response_text = response.text
+                        elif response and hasattr(response, 'candidates') and response.candidates:
+                            # 検索ツール使用時などのフォールバック
+                            first_candidate = response.candidates[0]
+                            if hasattr(first_candidate, 'content') and hasattr(first_candidate.content, 'parts'):
+                                parts_text = []
+                                for part in first_candidate.content.parts:
+                                    if hasattr(part, 'text') and part.text:
+                                        parts_text.append(part.text)
+                                if parts_text:
+                                    bot_response_text = ''.join(parts_text)
+                        
+                        if not bot_response_text:
+                            print(f"[ERROR] レスポンスからテキストを抽出できませんでした: {response}")
+                            bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
+                    except Exception as extract_error:
+                        print(f"[ERROR] レスポンス抽出エラー: {extract_error}")
+                        bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
 
                     if file_parts:
                         file_summary = await file_func.summarize_attachments(prompt, file_parts)

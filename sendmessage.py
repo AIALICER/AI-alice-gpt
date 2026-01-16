@@ -68,7 +68,9 @@ async def generate_content_with_fallback(client, primary_model, contents, config
                 )
                 
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            error_str = str(e)
+            print(f"[ERROR] Model {model_name} failed: {error_str}")
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
                 # 次のモデルへフォールバック
                 if model_name == models_to_try[-1][0]:
                     # 全てのモデルで失敗した場合
@@ -76,6 +78,7 @@ async def generate_content_with_fallback(client, primary_model, contents, config
                 continue
             else:
                 # 429以外のエラーはそのまま送出
+                print(f"[ERROR] Non-429 error occurred: {type(e).__name__}: {error_str}")
                 raise e
     
     # ここには到達しないはずだが、念のため
