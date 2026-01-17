@@ -412,7 +412,7 @@ async def resolve_mentions(message):
     return content
 
 
-async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500):
+async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, include_attachments=True):
     """
     Discordチャンネルから直近のメッセージ履歴を取得し、Gemini API形式に変換
     
@@ -421,40 +421,84 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500):
         limit: 取得するメッセージ数（デフォルト: 15）
         bot_id: BotのユーザーID（Botのメッセージをmodelとして識別）
         max_chars: 1メッセージあたりの最大文字数
+        include_attachments: 添付ファイルを含めるかどうか（デフォルト: True）
     
     Returns:
         list: Gemini API形式の履歴リスト
-        [{"role": "user"|"model", "parts": [{"text": "..."}]}]
+        [{"role": "user"|"model", "parts": [{"text": "..."}, ...]}]
     """
+    # 循環インポートを避けるため関数内でインポート
+    import file_func
+    
     try:
         messages = []
+        attachment_count = 0
+        
         async for msg in channel.history(limit=limit):
             # システムメッセージはスキップ
             if msg.type != discord.MessageType.default and msg.type != discord.MessageType.reply:
                 continue
             
-            # 空のメッセージはスキップ（添付ファイルのみの場合など）
-            if not msg.content or msg.content.strip() == "":
+            # テキストも添付ファイルもない場合はスキップ
+            has_content = msg.content and msg.content.strip() != ""
+            has_attachments = len(msg.attachments) > 0
+            
+            if not has_content and not has_attachments:
                 continue
             
-            # メンションを解決
-            resolved_content = await resolve_mentions(msg)
+            # partsリストを構築
+            parts = []
             
-            # 文字数制限
-            if len(resolved_content) > max_chars:
-                resolved_content = resolved_content[:max_chars] + "...(省略)"
-            
-            # roleの決定: Bot自身 → model, それ以外 → user
-            if bot_id and msg.author.id == bot_id:
-                role = "model"
+            # テキスト部分の処理
+            if has_content:
+                resolved_content = await resolve_mentions(msg)
+                
+                # 文字数制限
+                if len(resolved_content) > max_chars:
+                    resolved_content = resolved_content[:max_chars] + "...(省略)"
+                
+                # roleの決定: Bot自身 → model, それ以外 → user
+                if bot_id and msg.author.id == bot_id:
+                    role = "model"
+                else:
+                    role = "user"
+                    # ユーザー名を付加（複数ユーザーの識別用）
+                    resolved_content = f"[{msg.author.display_name}] {resolved_content}"
+                
+                parts.append({"text": resolved_content})
             else:
-                role = "user"
-                # ユーザー名を付加（複数ユーザーの識別用）
-                resolved_content = f"[{msg.author.display_name}] {resolved_content}"
+                # テキストなし・添付ファイルのみの場合
+                if bot_id and msg.author.id == bot_id:
+                    role = "model"
+                else:
+                    role = "user"
+                    # ファイル添付のみの場合はその旨を示す
+                    parts.append({"text": f"[{msg.author.display_name}] (ファイルを添付)"})
+            
+            # 添付ファイルの処理
+            if include_attachments and has_attachments:
+                try:
+                    # サポートされている画像形式のみ処理（パフォーマンス考慮）
+                    supported_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+                    image_attachments = [
+                        att for att in msg.attachments 
+                        if att.content_type and att.content_type.split(';')[0] in supported_types
+                    ]
+                    
+                    if image_attachments:
+                        # file_func.process_attachmentsを使用して画像を処理
+                        file_parts = await file_func.process_attachments(image_attachments)
+                        if file_parts:
+                            parts.extend(file_parts)
+                            attachment_count += len(file_parts)
+                            print(f"[Discord履歴] 添付ファイル {len(file_parts)}件を追加 (メッセージID: {msg.id})")
+                except Exception as att_error:
+                    print(f"[WARNING] 添付ファイル処理エラー: {att_error}")
+                    # 添付ファイルの処理に失敗してもテキストは保持
             
             messages.append({
                 "role": role,
-                "parts": [{"text": resolved_content}],
+                "parts": parts,
                 "_msg_id": msg.id,  # 重複検出用（後で削除）
                 "_timestamp": msg.created_at  # ソート用（後で削除）
             })
@@ -467,7 +511,7 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500):
             del msg["_msg_id"]
             del msg["_timestamp"]
         
-        print(f"[Discord履歴] {len(messages)}件取得 (チャンネル: {channel.name})")
+        print(f"[Discord履歴] {len(messages)}件取得 (チャンネル: {channel.name}, 添付ファイル: {attachment_count}件)")
         return messages
     
     except discord.Forbidden:
