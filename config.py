@@ -11,7 +11,7 @@ import time
 active_timers = {}
 
 # === 過去チャット履歴読み込み設定 ===
-DISCORD_HISTORY_LIMIT = 15  # Discordから取得するメッセージ数
+DISCORD_HISTORY_LIMIT = 5  # Discordから取得するメッセージ数
 ENABLE_DISCORD_HISTORY = True  # Discord履歴読み込み機能の有効/無効
 DISCORD_HISTORY_MAX_CHARS = 500  # 1メッセージあたりの最大文字数（長すぎるメッセージは切り詰め）
 # データベースの保存ディレクトリを確認・作成
