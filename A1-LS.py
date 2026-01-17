@@ -109,6 +109,17 @@ async def on_message(message):
                         current_parts.extend(file_parts)
                     
                     history = sendmessage.get_recent_history(channel_id, limit=6)
+                    
+                    # Discord履歴取得機能（メンションされていない過去チャットも含む）
+                    if ENABLE_DISCORD_HISTORY:
+                        discord_history = await sendmessage.fetch_discord_history(
+                            message.channel,
+                            limit=DISCORD_HISTORY_LIMIT,
+                            bot_id=discord_client.user.id,
+                            max_chars=DISCORD_HISTORY_MAX_CHARS
+                        )
+                        # Discord履歴とDB履歴をマージ
+                        history = sendmessage.merge_histories(discord_history, history, max_total=DISCORD_HISTORY_LIMIT)
     
                     input_contents = history + [{
                          "role": "user",

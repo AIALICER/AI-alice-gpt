@@ -379,3 +379,141 @@ async def send_long_message(channel, text):
             file=file
         )
 
+
+# === Phase 1-4: Discord履歴取得機能 ===
+
+async def resolve_mentions(message):
+    """
+    メンション形式を読みやすい形式に変換
+    <@123456789> → @UserName
+    <#123456789> → #ChannelName
+    
+    Args:
+        message: Discord message object
+    
+    Returns:
+        str: メンションが解決されたテキスト
+    """
+    content = message.content
+    
+    # ユーザーメンションの解決
+    for user in message.mentions:
+        content = content.replace(f'<@{user.id}>', f'@{user.display_name}')
+        content = content.replace(f'<@!{user.id}>', f'@{user.display_name}')
+    
+    # チャンネルメンションの解決
+    for channel in message.channel_mentions:
+        content = content.replace(f'<#{channel.id}>', f'#{channel.name}')
+    
+    # ロールメンションの解決
+    for role in message.role_mentions:
+        content = content.replace(f'<@&{role.id}>', f'@{role.name}')
+    
+    return content
+
+
+async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500):
+    """
+    Discordチャンネルから直近のメッセージ履歴を取得し、Gemini API形式に変換
+    
+    Args:
+        channel: Discord channel object
+        limit: 取得するメッセージ数（デフォルト: 15）
+        bot_id: BotのユーザーID（Botのメッセージをmodelとして識別）
+        max_chars: 1メッセージあたりの最大文字数
+    
+    Returns:
+        list: Gemini API形式の履歴リスト
+        [{"role": "user"|"model", "parts": [{"text": "..."}]}]
+    """
+    try:
+        messages = []
+        async for msg in channel.history(limit=limit):
+            # システムメッセージはスキップ
+            if msg.type != discord.MessageType.default and msg.type != discord.MessageType.reply:
+                continue
+            
+            # 空のメッセージはスキップ（添付ファイルのみの場合など）
+            if not msg.content or msg.content.strip() == "":
+                continue
+            
+            # メンションを解決
+            resolved_content = await resolve_mentions(msg)
+            
+            # 文字数制限
+            if len(resolved_content) > max_chars:
+                resolved_content = resolved_content[:max_chars] + "...(省略)"
+            
+            # roleの決定: Bot自身 → model, それ以外 → user
+            if bot_id and msg.author.id == bot_id:
+                role = "model"
+            else:
+                role = "user"
+                # ユーザー名を付加（複数ユーザーの識別用）
+                resolved_content = f"[{msg.author.display_name}] {resolved_content}"
+            
+            messages.append({
+                "role": role,
+                "parts": [{"text": resolved_content}],
+                "_msg_id": msg.id,  # 重複検出用（後で削除）
+                "_timestamp": msg.created_at  # ソート用（後で削除）
+            })
+        
+        # 古い順にソート（Gemini APIは会話順を期待）
+        messages.sort(key=lambda x: x["_timestamp"])
+        
+        # 内部用フィールドを削除
+        for msg in messages:
+            del msg["_msg_id"]
+            del msg["_timestamp"]
+        
+        print(f"[Discord履歴] {len(messages)}件取得 (チャンネル: {channel.name})")
+        return messages
+    
+    except discord.Forbidden:
+        print(f"[WARNING] チャンネル {channel.id} の履歴取得権限がありません")
+        return []
+    except discord.HTTPException as e:
+        print(f"[ERROR] Discord履歴取得エラー: {e}")
+        return []
+    except Exception as e:
+        print(f"[ERROR] 予期しないエラー (Discord履歴取得): {e}")
+        return []
+
+
+def merge_histories(discord_history, db_history, max_total=15):
+    """
+    Discord履歴とDB履歴をマージ
+    
+    優先順位:
+    1. Discord履歴を優先（より最新で正確）
+    2. DB履歴は補完用（Discordから取得できない古い履歴）
+    
+    Args:
+        discord_history: fetch_discord_history()の戻り値
+        db_history: get_recent_history()の戻り値
+        max_total: マージ後の最大件数
+    
+    Returns:
+        list: マージされた履歴（最大max_total件）
+    """
+    if not discord_history:
+        # Discord履歴がない場合はDB履歴のみ
+        return db_history[:max_total] if db_history else []
+    
+    if not db_history:
+        # DB履歴がない場合はDiscord履歴のみ
+        return discord_history[:max_total]
+    
+    # Discord履歴を優先して使用
+    # DB履歴はDiscord履歴より古いもののみを追加（重複を避ける）
+    # 現時点ではDiscord履歴を主として使用し、DB履歴は記憶機能として別途活用
+    merged = discord_history.copy()
+    
+    # 件数制限
+    if len(merged) > max_total:
+        merged = merged[-max_total:]  # 最新のmax_total件を保持
+    
+    print(f"[履歴マージ] Discord: {len(discord_history)}件, DB: {len(db_history)}件 → 結果: {len(merged)}件")
+    return merged
+
