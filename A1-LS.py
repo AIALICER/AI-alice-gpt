@@ -1,4 +1,5 @@
 import discord
+import re
 from google import genai
 from google.genai import types
 from datetime import datetime, timedelta, timezone
@@ -42,7 +43,11 @@ async def on_message(message):
     if message.content == "!ログ確認":
         look_db.check_database()
     # メンションされた場合の処理＆!アリス コマンドで呼び出す（後方互換性）
-    if discord_client.user.mentioned_in(message) or message.content.startswith("!アリス "):
+    # 全角/半角の!、全角/半角スペース、改行に対応
+    alice_command_pattern = re.compile(r'^[!！]アリス[ 　\n]')
+    alice_command_match = alice_command_pattern.match(message.content)
+    
+    if discord_client.user.mentioned_in(message) or alice_command_match:
         
         if "タイマー" in message.content and ("残り" in message.content or "状況" in message.content):
           # timeeeファイルの関数を呼び出す
@@ -52,8 +57,9 @@ async def on_message(message):
         # メンション部分を除去してプロンプトを取得
         if discord_client.user.mentioned_in(message):
           prompt = message.content.replace(f'<@{discord_client.user.id}>', '').replace(f'<@!{discord_client.user.id}>', '').strip()
-        else:
-          prompt = message.content[5:]  # "!アリス " は5文字
+        elif alice_command_match:
+          # マッチした部分を除去してプロンプトを取得
+          prompt = message.content[alice_command_match.end():].strip()
         if message.channel_mentions:
          channel_id= message.channel_mentions[0].id
          prompt= prompt.replace(f'<#{channel_id}>', '')
@@ -163,7 +169,7 @@ async def on_message(message):
                         elif response and hasattr(response, 'candidates') and response.candidates:
                             # 検索ツール使用時などのフォールバック
                             first_candidate = response.candidates[0]
-                            if hasattr(first_candidate, 'content') and hasattr(first_candidate.content, 'parts'):
+                            if hasattr(first_candidate, 'content') and hasattr(first_candidate.content, 'parts') and first_candidate.content.parts:
                                 parts_text = []
                                 for part in first_candidate.content.parts:
                                     if hasattr(part, 'text') and part.text:
