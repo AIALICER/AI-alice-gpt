@@ -159,29 +159,75 @@ async def on_message(message):
                 
                     # 応答の取得と保存
                     print(f"[DEBUG] Response type: {type(response)}")
-                    print(f"[DEBUG] Response has text: {hasattr(response, 'text')}")
+                    print(f"[DEBUG] Response has text attr: {hasattr(response, 'text')}")
+                    
+                    # 詳細デバッグ: レスポンス構造を出力
+                    if response:
+                        print(f"[DEBUG-DETAIL] response.text value: {repr(response.text) if hasattr(response, 'text') else 'N/A'}")
+                        if hasattr(response, 'candidates') and response.candidates:
+                            for i, cand in enumerate(response.candidates):
+                                print(f"[DEBUG-DETAIL] Candidate[{i}] finish_reason: {cand.finish_reason if hasattr(cand, 'finish_reason') else 'N/A'}")
+                                if hasattr(cand, 'content'):
+                                    print(f"[DEBUG-DETAIL] Candidate[{i}] content: {cand.content}")
+                                    if hasattr(cand.content, 'parts'):
+                                        print(f"[DEBUG-DETAIL] Candidate[{i}] parts count: {len(cand.content.parts) if cand.content.parts else 0}")
+                                        if cand.content.parts:
+                                            for j, part in enumerate(cand.content.parts):
+                                                print(f"[DEBUG-DETAIL] Part[{j}]: {part}")
+                        if hasattr(response, 'usage_metadata'):
+                            um = response.usage_metadata
+                            print(f"[DEBUG-DETAIL] thoughts_token_count: {um.thoughts_token_count if hasattr(um, 'thoughts_token_count') else 'N/A'}")
+                            print(f"[DEBUG-DETAIL] total_token_count: {um.total_token_count if hasattr(um, 'total_token_count') else 'N/A'}")
                     
                     # レスポンスからテキストを安全に取得
                     bot_response_text = None
                     try:
+                        # 方法1: response.text を直接取得
                         if response and hasattr(response, 'text') and response.text:
                             bot_response_text = response.text
-                        elif response and hasattr(response, 'candidates') and response.candidates:
-                            # 検索ツール使用時などのフォールバック
+                            print(f"[DEBUG] テキスト抽出成功 (response.text)")
+                        
+                        # 方法2: candidates.content.parts から取得
+                        if not bot_response_text and response and hasattr(response, 'candidates') and response.candidates:
                             first_candidate = response.candidates[0]
-                            if hasattr(first_candidate, 'content') and hasattr(first_candidate.content, 'parts') and first_candidate.content.parts:
-                                parts_text = []
-                                for part in first_candidate.content.parts:
-                                    if hasattr(part, 'text') and part.text:
-                                        parts_text.append(part.text)
-                                if parts_text:
-                                    bot_response_text = ''.join(parts_text)
+                            if hasattr(first_candidate, 'content') and first_candidate.content:
+                                if hasattr(first_candidate.content, 'parts') and first_candidate.content.parts:
+                                    parts_text = []
+                                    for part in first_candidate.content.parts:
+                                        if hasattr(part, 'text') and part.text:
+                                            parts_text.append(part.text)
+                                    if parts_text:
+                                        bot_response_text = ''.join(parts_text)
+                                        print(f"[DEBUG] テキスト抽出成功 (candidates.content.parts)")
+                        
+                        # 空レスポンス検出: thinking_level を下げてリトライ
+                        if not bot_response_text:
+                            print(f"[WARN] 空レスポンス検出。thinking_level='none' でリトライします...")
+                            retry_config = types.GenerateContentConfig(
+                                system_instruction=full_system_instruction,
+                                tools=alice_tools,
+                                thinking_config=types.ThinkingConfig(
+                                    thinking_level='none'
+                                ))
+                            retry_response = await sendmessage.generate_content_with_fallback(
+                                client=gemini_client,
+                                primary_model='gemini-3-flash-preview',
+                                contents=input_contents,
+                                config=retry_config
+                            )
+                            if retry_response and hasattr(retry_response, 'text') and retry_response.text:
+                                bot_response_text = retry_response.text
+                                print(f"[DEBUG] リトライ成功 (thinking_level=none)")
+                            else:
+                                print(f"[ERROR] リトライも失敗しました: {retry_response}")
                         
                         if not bot_response_text:
-                            print(f"[ERROR] レスポンスからテキストを抽出できませんでした: {response}")
+                            print(f"[ERROR] レスポンスからテキストを抽出できませんでした")
                             bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
                     except Exception as extract_error:
                         print(f"[ERROR] レスポンス抽出エラー: {extract_error}")
+                        import traceback
+                        traceback.print_exc()
                         bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
 
                     if file_parts:
