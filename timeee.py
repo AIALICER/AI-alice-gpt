@@ -1,14 +1,8 @@
-import discord
-from google import genai
-from google.genai import types
-import os
-import aiohttp
 from datetime import datetime, timedelta, timezone
-import sqlite3
 import asyncio
-import look_db
 import time
 from config import *
+from alice_message import *
 async def set_timer(channel, minutes, task_name):
     channel_id = channel.id
     end_time = time.time() + (minutes * 60)
@@ -22,7 +16,9 @@ async def set_timer(channel, minutes, task_name):
 
     try:
         await asyncio.sleep(minutes * 60)
-        await channel.send(f"時間です！「{task_name}」の予定です!")
+        finish_msg = MSG_TIMER_FINISH.format(task_name=task_name)
+        await channel.send(finish_msg)
+        
     finally:
         # 終わったらリストから消す
         if channel_id in active_timers:
@@ -30,9 +26,9 @@ async def set_timer(channel, minutes, task_name):
 def get_remaining_timers(channel_id):
     """指定したチャンネルのタイマー一覧を文字列で返す"""
     if channel_id not in active_timers or not active_timers[channel_id]:
-        return "現在動いているタイマーはありません!"
+        return TIMER_NOT
 
-    lines = ["【現在稼働中のタイマー】"]
+    lines = [TIMER_ALL]
     now = time.time()
 
     for timer in active_timers[channel_id]:
@@ -40,9 +36,16 @@ def get_remaining_timers(channel_id):
         if remaining > 0:
             minutes = int(remaining // 60)
             seconds = int(remaining % 60)
-            lines.append(f"・{timer['task']}: 残り {minutes}分{seconds}秒")
+            # テンプレートにタスク名と時間を流し込む
+            msg = MSG_TIMER_REMAINING.format(
+              task_name=timer['task'], 
+              minutes=minutes, 
+              seconds=seconds
+            )         
+            lines.append(msg)
         else:
-            lines.append(f"・{timer['task']}: まもなく終了")
+            msg = MSG_TIMER_SOON.format(task_name=timer['task'])
+            lines.append(msg)
 
     return "\n".join(lines)
 def get_japan_time() -> str:
