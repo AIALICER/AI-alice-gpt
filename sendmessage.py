@@ -9,6 +9,7 @@ import asyncio
 import look_db
 import time
 from config import *
+from alice_message import *
 async def generate_content_with_fallback(client, primary_model, contents, config):
     """
     APIレートリミット(429)発生時に自動フォールバックするラッパー関数
@@ -375,7 +376,7 @@ async def send_long_message(channel, text):
             filename='response.txt'
         )
         await channel.send(
-            "応答が長すぎるため、テキストファイルで送信します。",
+            ALI_LONG_MES,
             file=file
         )
 

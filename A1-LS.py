@@ -10,6 +10,7 @@ import timeee
 from config import *
 import db_func
 import file_func
+from alice_message import *
 # システムインストラクション
 try:
     with open('system_instruction.txt', 'r', encoding='utf-8') as f:
@@ -36,9 +37,9 @@ async def on_message(message):
     
     if message.content == "!アリス 履歴消去":
         if db_func.clear_db_history(channel_id):       
-            await message.channel.send("了解です！このチャンネルの記憶をリセットしました！")
+            await message.channel.send(DB_DEL_SUC)
         else:
-            await message.channel.send("ごめんなさい、履歴の消去に失敗しました…")
+            await message.channel.send(DB_DEL_FIL)
         return
     if message.content == "!ログ確認":
         look_db.check_database()
@@ -90,12 +91,12 @@ async def on_message(message):
                 try:
                     # 推論レベルが高い場合、追加の思考中メッセージを送信
                     if thinking_level == 'high':
-                        await message.channel.send("少し待ってください！アリスは思考中です…！")
+                        await message.channel.send(ALI_THI)
                     
                     # 検索が必要な場合、ツールを設定
                     alice_tools = []
                     if needs_search:
-                        await message.channel.send("アリス、検索中です！")
+                        await message.channel.send(ALI_SUR)
                         alice_tools.append(
                             types.Tool(google_search=types.GoogleSearch())
                         )
@@ -223,12 +224,12 @@ async def on_message(message):
                         
                         if not bot_response_text:
                             print(f"[ERROR] レスポンスからテキストを抽出できませんでした")
-                            bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
+                            bot_response_text = ALICE_FILED
                     except Exception as extract_error:
                         print(f"[ERROR] レスポンス抽出エラー: {extract_error}")
                         import traceback
                         traceback.print_exc()
-                        bot_response_text = "応答の生成に失敗しました。もう一度お試しください。"
+                        bot_response_text = ALICE_FILED
 
                     if file_parts:
                         file_summary = await file_func.summarize_attachments(prompt, file_parts)
@@ -244,11 +245,13 @@ async def on_message(message):
 
                 except Exception as e:
                     print(f"エラー: {e}")
-                    await message.channel.send(f"エラーが発生しました…アリス、リブートします。\n詳細: {e}")
+                    error_msg = ERR_REBOOT.format(error_detail=e)
+                    await message.channel.send(error_msg)
         return
     
     # !光よ! コマンド
     if message.content.startswith("!光よ!"):
+        await message.channel.send(HIKARI_KEN)
         await message.channel.send(file=discord.File("assets/光よ！.jpg"))
         return
     
