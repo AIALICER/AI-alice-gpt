@@ -25,8 +25,9 @@ async def process_attachments(attachments):
                 print(f"ファイルが大きすぎます: {attachment.filename} ({attachment.size} bytes)")
                 continue
             
-            # ファイルをダウンロード
-            async with aiohttp.ClientSession() as session:
+            # ファイルをダウンロード（タイムアウト10秒）
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(attachment.url) as resp:
                     if resp.status == 200:
                         file_bytes = await resp.read()

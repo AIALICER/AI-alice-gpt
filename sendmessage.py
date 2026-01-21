@@ -71,15 +71,30 @@ async def generate_content_with_fallback(client, primary_model, contents, config
         except Exception as e:
             error_str = str(e)
             print(f"[ERROR] Model {model_name} failed: {error_str}")
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            
+            # 503 UNAVAILABLE (サーバーオーバーロード) または 429 (レートリミット) の場合
+            is_retryable = (
+                "429" in error_str or 
+                "RESOURCE_EXHAUSTED" in error_str or
+                "503" in error_str or 
+                "UNAVAILABLE" in error_str or
+                "overloaded" in error_str.lower()
+            )
+            
+            if is_retryable:
+                # 503の場合は少し待機してからリトライ
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    print(f"[INFO] サーバー過負荷検出。2秒待機後にフォールバックします...")
+                    await asyncio.sleep(2)
+                
                 # 次のモデルへフォールバック
                 if model_name == models_to_try[-1][0]:
                     # 全てのモデルで失敗した場合
-                    raise Exception(f"全てのモデルでレートリミット到達: {e}")
+                    raise Exception(f"全てのモデルでエラー発生（リトライ上限）: {e}")
                 continue
             else:
-                # 429以外のエラーはそのまま送出
-                print(f"[ERROR] Non-429 error occurred: {type(e).__name__}: {error_str}")
+                # リトライ対象外のエラーはそのまま送出
+                print(f"[ERROR] Non-retryable error occurred: {type(e).__name__}: {error_str}")
                 raise e
     
     # ここには到達しないはずだが、念のため
@@ -476,8 +491,9 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                     # ファイル添付のみの場合はその旨を示す
                     parts.append({"text": f"[{msg.author.display_name}] (ファイルを添付)"})
             
-            # 添付ファイルの処理
-            if include_attachments and has_attachments:
+            # 添付ファイルの処理（過負荷防止のため最大3件まで）
+            MAX_HISTORY_ATTACHMENTS = 3
+            if include_attachments and has_attachments and attachment_count < MAX_HISTORY_ATTACHMENTS:
                 try:
                     # サポートされている画像形式のみ処理（パフォーマンス考慮）
                     supported_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -486,6 +502,10 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                         if att.content_type and att.content_type.split(';')[0] in supported_types
                     ]
                     
+                    # 残りの取得可能枠を計算
+                    remaining_slots = MAX_HISTORY_ATTACHMENTS - attachment_count
+                    image_attachments = image_attachments[:remaining_slots]
+                    
                     if image_attachments:
                         # file_func.process_attachmentsを使用して画像を処理
                         file_parts = await file_func.process_attachments(image_attachments)
@@ -493,6 +513,8 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                             parts.extend(file_parts)
                             attachment_count += len(file_parts)
                             print(f"[Discord履歴] 添付ファイル {len(file_parts)}件を追加 (メッセージID: {msg.id})")
+                except asyncio.TimeoutError:
+                    print(f"[WARNING] 添付ファイルのダウンロードがタイムアウトしました (メッセージID: {msg.id})")
                 except Exception as att_error:
                     print(f"[WARNING] 添付ファイル処理エラー: {att_error}")
                     # 添付ファイルの処理に失敗してもテキストは保持
