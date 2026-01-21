@@ -491,8 +491,9 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                     # ファイル添付のみの場合はその旨を示す
                     parts.append({"text": f"[{msg.author.display_name}] (ファイルを添付)"})
             
-            # 添付ファイルの処理
-            if include_attachments and has_attachments:
+            # 添付ファイルの処理（過負荷防止のため最大3件まで）
+            MAX_HISTORY_ATTACHMENTS = 3
+            if include_attachments and has_attachments and attachment_count < MAX_HISTORY_ATTACHMENTS:
                 try:
                     # サポートされている画像形式のみ処理（パフォーマンス考慮）
                     supported_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -501,6 +502,10 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                         if att.content_type and att.content_type.split(';')[0] in supported_types
                     ]
                     
+                    # 残りの取得可能枠を計算
+                    remaining_slots = MAX_HISTORY_ATTACHMENTS - attachment_count
+                    image_attachments = image_attachments[:remaining_slots]
+                    
                     if image_attachments:
                         # file_func.process_attachmentsを使用して画像を処理
                         file_parts = await file_func.process_attachments(image_attachments)
@@ -508,6 +513,8 @@ async def fetch_discord_history(channel, limit=15, bot_id=None, max_chars=500, i
                             parts.extend(file_parts)
                             attachment_count += len(file_parts)
                             print(f"[Discord履歴] 添付ファイル {len(file_parts)}件を追加 (メッセージID: {msg.id})")
+                except asyncio.TimeoutError:
+                    print(f"[WARNING] 添付ファイルのダウンロードがタイムアウトしました (メッセージID: {msg.id})")
                 except Exception as att_error:
                     print(f"[WARNING] 添付ファイル処理エラー: {att_error}")
                     # 添付ファイルの処理に失敗してもテキストは保持
