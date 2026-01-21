@@ -71,15 +71,30 @@ async def generate_content_with_fallback(client, primary_model, contents, config
         except Exception as e:
             error_str = str(e)
             print(f"[ERROR] Model {model_name} failed: {error_str}")
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            
+            # 503 UNAVAILABLE (サーバーオーバーロード) または 429 (レートリミット) の場合
+            is_retryable = (
+                "429" in error_str or 
+                "RESOURCE_EXHAUSTED" in error_str or
+                "503" in error_str or 
+                "UNAVAILABLE" in error_str or
+                "overloaded" in error_str.lower()
+            )
+            
+            if is_retryable:
+                # 503の場合は少し待機してからリトライ
+                if "503" in error_str or "UNAVAILABLE" in error_str:
+                    print(f"[INFO] サーバー過負荷検出。2秒待機後にフォールバックします...")
+                    await asyncio.sleep(2)
+                
                 # 次のモデルへフォールバック
                 if model_name == models_to_try[-1][0]:
                     # 全てのモデルで失敗した場合
-                    raise Exception(f"全てのモデルでレートリミット到達: {e}")
+                    raise Exception(f"全てのモデルでエラー発生（リトライ上限）: {e}")
                 continue
             else:
-                # 429以外のエラーはそのまま送出
-                print(f"[ERROR] Non-429 error occurred: {type(e).__name__}: {error_str}")
+                # リトライ対象外のエラーはそのまま送出
+                print(f"[ERROR] Non-retryable error occurred: {type(e).__name__}: {error_str}")
                 raise e
     
     # ここには到達しないはずだが、念のため
