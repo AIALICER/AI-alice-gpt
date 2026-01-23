@@ -6,6 +6,9 @@ on:
       - main  # mainブランチにプッシュされたときに実行
   workflow_dispatch:  # 手動実行も可能にする
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: self-hosted  # Self-hosted runnerで実行
@@ -23,8 +26,14 @@ jobs:
         run: |
           cd /home/aosy/Docker/AI-Alice
           git config --global --add safe.directory /home/aosy/Docker/AI-Alice
-          # Pull using existing remote (SSH)
+          # Use GITHUB_TOKEN for authentication by rewriting SSH URL to HTTPS
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          
+          # Pull using existing remote (origin is SSH, but rewritten to HTTPS)
           git pull origin main
+          
+          # Clean up config (security)
+          git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf
       
       - name: Rebuild containers
         run: |
