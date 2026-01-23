@@ -203,12 +203,12 @@ async def on_message(message):
                         
                         # 空レスポンス検出: thinking_level を下げてリトライ
                         if not bot_response_text:
-                            print(f"[WARN] 空レスポンス検出。thinking_level='none' でリトライします...")
+                            print(f"[WARN] 空レスポンス検出。thinking_level='minimal' でリトライします...")
                             retry_config = types.GenerateContentConfig(
                                 system_instruction=full_system_instruction,
                                 tools=alice_tools,
                                 thinking_config=types.ThinkingConfig(
-                                    thinking_level='none'
+                                    thinking_level='minimal'
                                 ))
                             retry_response = await sendmessage.generate_content_with_fallback(
                                 client=gemini_client,
@@ -218,7 +218,7 @@ async def on_message(message):
                             )
                             if retry_response and hasattr(retry_response, 'text') and retry_response.text:
                                 bot_response_text = retry_response.text
-                                print(f"[DEBUG] リトライ成功 (thinking_level=none)")
+                                print(f"[DEBUG] リトライ成功 (thinking_level=minimal)")
                             else:
                                 print(f"[ERROR] リトライも失敗しました: {retry_response}")
                         

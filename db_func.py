@@ -103,8 +103,8 @@ async def generate_summary(old_memory, new_chat):
     - 3行程度の短い文章にまとめてください。
     """
     try:
-        # 要約用のAPI呼び出し（flashを使えば高速・安価です）
-        summary_response = gemini_client.models.generate_content(
+        # 要約用のAPI呼び出し（非同期でハートビートブロックを防止）
+        summary_response = await gemini_client.aio.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt
         )
