@@ -11,6 +11,14 @@ jobs:
     runs-on: self-hosted  # Self-hosted runnerで実行
     
     steps:
+      - name: Setup SSH for GitHub
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          # GitHubのホストキーをknown_hostsに追加
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+      
       - name: Pull latest code
         run: |
           cd /home/aosy/Docker/AI-Alice
