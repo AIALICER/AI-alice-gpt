@@ -13,6 +13,8 @@ data/
 
 # Docker files (server-side only)
 Dockerfile
+compose.yaml
+docker-compose.yml
 docker-compose.override.yml
 
 # Documentation & Setup files (Exclude from GitHub)
