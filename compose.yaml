@@ -1,0 +1,40 @@
+services:
+  # アリス Discord Bot
+  alice:
+    build: .
+    container_name: ai-alice
+    command: python characters/AL_1S/AL-1S.py
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - shared-network
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ケイ Discord Bot
+  kei:
+    build: .
+    container_name: ai-kei
+    command: python characters/Key/Key.py
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - shared-network
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  shared-network:
+    external: true
