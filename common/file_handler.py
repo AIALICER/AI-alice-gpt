@@ -1,17 +1,21 @@
-import discord
-from google import genai
-from google.genai import types
-import os
+"""
+ファイル処理モジュール
+
+- Discordの添付ファイル処理
+- ファイル内容の要約生成
+"""
+
 import aiohttp
-from datetime import datetime, timedelta, timezone
-import sqlite3
-import asyncio
-import look_db
-import time
-from config import *
-async def process_attachments(attachments):
+from google.genai import types
+from .config_base import gemini_client
+
+
+async def process_attachments(attachments) -> list:
     """
-    Discord の添付ファイルを処理してGemini APIで使える形式に変換
+    Discordの添付ファイルを処理してGemini APIで使える形式に変換
+    
+    Args:
+        attachments: Discord添付ファイルのリスト
     
     Returns:
         list: types.Part オブジェクトのリスト
@@ -22,7 +26,7 @@ async def process_attachments(attachments):
         try:
             # ファイルサイズチェック（20MB以下）
             if attachment.size > 20 * 1024 * 1024:
-                print(f"ファイルが大きすぎます: {attachment.filename} ({attachment.size} bytes)")
+                print(f"File too large: {attachment.filename} ({attachment.size} bytes)")
                 continue
             
             # ファイルをダウンロード（タイムアウト10秒）
@@ -34,12 +38,10 @@ async def process_attachments(attachments):
                         
                         # MIMEタイプを取得・調整
                         mime_type = attachment.content_type or 'application/octet-stream'
-                        # パラメータ（; charset=utf-8など）を除去
                         if ';' in mime_type:
                             mime_type = mime_type.split(';')[0].strip()
                         
-                        # テキストやコードファイルは text/plain に統一して扱う
-                        # Gemini APIは特定のMIMEタイプのみサポートしているため
+                        # テキストやコードファイルは text/plain に統一
                         if mime_type.startswith('text/') or mime_type in [
                             'application/json', 'application/javascript', 'application/x-python', 
                             'application/x-httpd-php', 'application/x-sh', 'application/xml'
@@ -52,20 +54,27 @@ async def process_attachments(attachments):
                             mime_type=mime_type
                         )
                         parts.append(part)
-                        print(f"ファイル追加: {attachment.filename} ({mime_type})")
+                        print(f"File added: {attachment.filename} ({mime_type})")
         except Exception as e:
-            print(f"ファイル処理エラー ({attachment.filename}): {e}")
+            print(f"File processing error ({attachment.filename}): {e}")
     
     return parts
 
-async def summarize_attachments(prompt, file_parts):
+
+async def summarize_attachments(prompt: str, file_parts: list) -> str:
     """
     添付ファイルの内容を1行程度のテキストに要約する
+    
+    Args:
+        prompt: ユーザーのプロンプト（コンテキスト用）
+        file_parts: process_attachments()で取得したパーツリスト
+    
+    Returns:
+        str: 要約テキスト
     """
     if not file_parts:
         return ""
     
-    # 要約専用の短い命令
     summary_instruction = (
         "あなたは優秀なアシスタントです。提供された添付ファイル（画像や書類）の内容を、"
         "後で思い返せるように「1行で」簡潔に説明してください。"
@@ -73,7 +82,6 @@ async def summarize_attachments(prompt, file_parts):
     )
     
     try:
-        # 要約用のAPI呼び出し（flashを使えば高速・安価です）
         summary_response = gemini_client.models.generate_content(
             model='gemini-3-flash-preview',
             contents=[prompt] + file_parts if prompt else file_parts,
@@ -81,7 +89,7 @@ async def summarize_attachments(prompt, file_parts):
                 system_instruction=summary_instruction
             )
         )
-        return f" [ファイル要約: {summary_response.text.strip()}]"
+        return f" [File summary: {summary_response.text.strip()}]"
     except Exception as e:
-        print(f"要約生成エラー: {e}")
-        return " [ファイルが含まれています]"
+        print(f"Summary generation error: {e}")
+        return " [File attached]"

@@ -1,0 +1,398 @@
+"""
+Discord Bot基盤クラス
+
+キャラクターごとの設定を受け取り、共通のメッセージ処理ロジックを提供する。
+"""
+
+import discord
+import re
+import os
+import asyncio
+from typing import Dict, Any, Optional, List, Callable
+from google.genai import types
+
+from .config_base import (
+    gemini_client,
+    get_db_path,
+    init_database,
+    DISCORD_HISTORY_LIMIT,
+    ENABLE_DISCORD_HISTORY,
+    DISCORD_HISTORY_MAX_CHARS,
+)
+from . import gemini_handler
+from . import db_handler
+from . import file_handler
+from . import timer_handler
+from . import message_sender
+
+
+class CharacterBot:
+    """
+    キャラクター別Discord Botの基盤クラス
+    
+    Args:
+        character_name: 内部キャラクター名（DB名に使用、例: "alice", "kei"）
+        display_name: 表示用キャラクター名（例: "アリス", "ケイ"）
+        command_pattern: コマンドパターン（正規表現）
+        history_clear_command: 履歴消去コマンド文字列
+        discord_token_env: Discord Tokenの環境変数名
+        system_instruction_path: システムインストラクションファイルのパス
+        messages: メッセージテンプレートモジュール
+        special_commands: 特殊コマンド辞書（オプション）
+    """
+    
+    def __init__(
+        self,
+        character_name: str,
+        display_name: str,
+        command_pattern: re.Pattern,
+        history_clear_command: str,
+        discord_token_env: str,
+        system_instruction_path: str,
+        messages,
+        special_commands: Optional[Dict[str, Dict[str, str]]] = None
+    ):
+        self.character_name = character_name
+        self.display_name = display_name
+        self.command_pattern = command_pattern
+        self.history_clear_command = history_clear_command
+        self.discord_token_env = discord_token_env
+        self.system_instruction_path = system_instruction_path
+        self.messages = messages
+        self.special_commands = special_commands or {}
+        
+        # データベースパスの設定と初期化
+        self.db_path = get_db_path(character_name)
+        init_database(self.db_path)
+        
+        # システムインストラクションの読み込み
+        self.system_instruction = self._load_system_instruction()
+        
+        # Discord クライアントの初期化
+        intents = discord.Intents.default()
+        intents.messages = True
+        intents.message_content = True
+        self.client = discord.Client(intents=intents)
+        
+        # 状態管理
+        self.summary_tasks: Dict[int, asyncio.Task] = {}
+        self.active_timers: Dict[int, List[Dict[str, Any]]] = {}
+        
+        # イベントハンドラの設定
+        self._setup_events()
+    
+    def _load_system_instruction(self) -> str:
+        """システムインストラクションファイルを読み込む"""
+        try:
+            with open(self.system_instruction_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            print(f"[ERROR] System instruction file not found: {self.system_instruction_path}")
+            return ""
+    
+    def _setup_events(self) -> None:
+        """Discordイベントハンドラを設定"""
+        
+        @self.client.event
+        async def on_ready():
+            print(f"[{self.display_name}] Logged in as {self.client.user}")
+        
+        @self.client.event
+        async def on_message(message):
+            await self._handle_message(message)
+    
+    async def _handle_message(self, message: discord.Message) -> None:
+        """メッセージハンドラ（メインロジック）"""
+        # 自分自身のメッセージは無視
+        if message.author == self.client.user:
+            return
+        
+        current_channel_id = message.channel.id
+        channel_id = current_channel_id
+        
+        # 履歴消去コマンド
+        if message.content == self.history_clear_command:
+            if db_handler.clear_db_history(self.db_path, channel_id):
+                await message.channel.send(self.messages.DB_DEL_SUC)
+            else:
+                await message.channel.send(self.messages.DB_DEL_FIL)
+            return
+        
+        # 特殊コマンドの処理
+        for cmd, cmd_config in self.special_commands.items():
+            if message.content.startswith(cmd):
+                if 'message' in cmd_config:
+                    await message.channel.send(cmd_config['message'])
+                if 'file' in cmd_config:
+                    await message.channel.send(file=discord.File(cmd_config['file']))
+                return
+        
+        # メンションまたはコマンドパターンのチェック
+        command_match = self.command_pattern.match(message.content)
+        
+        if self.client.user.mentioned_in(message) or command_match:
+            # タイマー状況確認
+            if "タイマー" in message.content and ("残り" in message.content or "状況" in message.content):
+                status_message = timer_handler.get_remaining_timers(
+                    channel_id,
+                    no_timer_message=self.messages.TIMER_NOT,
+                    timer_list_header=self.messages.TIMER_ALL,
+                    remaining_template=self.messages.MSG_TIMER_REMAINING,
+                    soon_template=self.messages.MSG_TIMER_SOON,
+                    timers_dict=self.active_timers
+                )
+                await message.channel.send(status_message)
+                return
+            
+            # プロンプトの抽出
+            if self.client.user.mentioned_in(message):
+                prompt = message.content.replace(f'<@{self.client.user.id}>', '').replace(f'<@!{self.client.user.id}>', '').strip()
+            elif command_match:
+                prompt = message.content[command_match.end():].strip()
+            else:
+                prompt = ""
+            
+            # チャンネルメンションの処理
+            if message.channel_mentions:
+                channel_id = message.channel_mentions[0].id
+                prompt = prompt.replace(f'<#{channel_id}>', '')
+            
+            # 要約タスクのリセット
+            if channel_id in self.summary_tasks:
+                self.summary_tasks[channel_id].cancel()
+            self.summary_tasks[channel_id] = asyncio.create_task(
+                db_handler.summarize_and_cleanup(self.db_path, channel_id)
+            )
+            
+            # 添付ファイルの処理
+            file_parts = []
+            if message.attachments:
+                file_parts = await file_handler.process_attachments(message.attachments)
+            
+            # プロンプトまたは添付ファイルがある場合のみ応答
+            if prompt or file_parts:
+                async with message.channel.typing():
+                    await self._process_gemini_request(
+                        message, channel_id, current_channel_id, prompt, file_parts
+                    )
+            return
+    
+    async def _process_gemini_request(
+        self,
+        message: discord.Message,
+        channel_id: int,
+        current_channel_id: int,
+        prompt: str,
+        file_parts: list
+    ) -> None:
+        """Gemini APIへのリクエストを処理"""
+        
+        # 推論レベルと検索要否の判定
+        def get_history_func(ch_id, limit):
+            return db_handler.get_recent_history(self.db_path, ch_id, limit)
+        
+        judgment = await gemini_handler.determine_level_and_search(
+            prompt=prompt if prompt else "",
+            channel_id=channel_id,
+            has_attachments=bool(file_parts),
+            get_recent_history_func=get_history_func,
+            character_name=self.display_name
+        )
+        
+        thinking_level = judgment['level']
+        needs_search = judgment['search']
+        timer_second = judgment['minutes']
+        timer_name = judgment['task']
+        
+        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, Prompt: {prompt[:50] if prompt else '(file only)'}...")
+        
+        try:
+            # 推論レベルが高い場合、思考中メッセージを送信
+            if thinking_level == 'high':
+                await message.channel.send(self.messages.ALI_THI)
+            
+            # 検索が必要な場合
+            tools = []
+            if needs_search:
+                await message.channel.send(self.messages.ALI_SUR)
+                tools.append(types.Tool(google_search=types.GoogleSearch()))
+            
+            # タイマーの設定
+            if timer_second != 0:
+                t_name = str(timer_name) if timer_name else "Timer"
+                asyncio.create_task(timer_handler.set_timer(
+                    message.channel,
+                    timer_second,
+                    t_name,
+                    finish_message_template=self.messages.MSG_TIMER_FINISH,
+                    timers_dict=self.active_timers
+                ))
+            
+            # コンテンツの構築
+            current_parts = []
+            syslog = ""
+            if timer_second != 0:
+                syslog = f"\n\n[System info: Timer accepted for {timer_second} minutes. Please only report 'Acknowledged' and do not respond as if time has passed. Also, do not reference past conversation for this message.]"
+            
+            if prompt:
+                current_parts.append({"text": prompt + syslog})
+            if file_parts:
+                current_parts.extend(file_parts)
+            
+            # 履歴の取得
+            history = db_handler.get_recent_history(self.db_path, channel_id, limit=6)
+            
+            # Discord履歴の取得とマージ
+            if ENABLE_DISCORD_HISTORY:
+                discord_history = await message_sender.fetch_discord_history(
+                    message.channel,
+                    limit=DISCORD_HISTORY_LIMIT,
+                    bot_id=self.client.user.id,
+                    max_chars=DISCORD_HISTORY_MAX_CHARS
+                )
+                history = message_sender.merge_histories(discord_history, history, max_total=DISCORD_HISTORY_LIMIT)
+            
+            input_contents = history + [{
+                "role": "user",
+                "parts": current_parts
+            }]
+            
+            # 記憶の取得
+            memories = db_handler.get_memories(self.db_path, channel_id)
+            
+            # 現在の日本時間
+            current_jst = timer_handler.get_japan_time()
+            
+            # システムインストラクションの構築
+            enhanced_instruction = f"{self.system_instruction}\n\n[Current Japan Time]\n{current_jst}"
+            if tools:
+                full_system_instruction = (
+                    enhanced_instruction + 
+                    "\n\n[IMPORTANT] Please use Google Search for latest information." +
+                    "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: " + 
+                    memories
+                )
+                print(f"[{self.display_name}] Executing search\n")
+            else:
+                full_system_instruction = (
+                    enhanced_instruction +
+                    "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: " +
+                    memories
+                )
+            
+            current_config = types.GenerateContentConfig(
+                system_instruction=full_system_instruction,
+                tools=tools,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=thinking_level
+                )
+            )
+            
+            # Gemini API呼び出し
+            response = await gemini_handler.generate_content_with_fallback(
+                client=gemini_client,
+                primary_model='gemini-3-flash-preview',
+                contents=input_contents,
+                config=current_config
+            )
+            
+            # レスポンスからテキストを抽出
+            bot_response_text = await self._extract_response_text(
+                response, input_contents, full_system_instruction, tools
+            )
+            
+            # 履歴の保存
+            if file_parts:
+                file_summary = await file_handler.summarize_attachments(prompt, file_parts)
+                save_user_text = f"{prompt}{file_summary}"
+            else:
+                save_user_text = prompt
+            
+            db_handler.save_message(self.db_path, current_channel_id, 'user', save_user_text)
+            db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
+            
+            print(f"[{self.display_name}] DB saved: {save_user_text}")
+            await message_sender.send_long_message(
+                message.channel, 
+                bot_response_text,
+                long_message_notice=self.messages.ALI_LONG_MES
+            )
+            
+        except Exception as e:
+            print(f"[{self.display_name}] Error: {e}")
+            error_msg = self.messages.ERR_REBOOT.format(error_detail=e)
+            await message.channel.send(error_msg)
+    
+    async def _extract_response_text(
+        self,
+        response,
+        input_contents: list,
+        full_system_instruction: str,
+        tools: list
+    ) -> str:
+        """レスポンスからテキストを安全に抽出"""
+        
+        bot_response_text = None
+        
+        try:
+            # 方法1: response.text を直接取得
+            if response and hasattr(response, 'text') and response.text:
+                bot_response_text = response.text
+                print(f"[{self.display_name}] Text extracted (response.text)")
+            
+            # 方法2: candidates.content.parts から取得
+            if not bot_response_text and response and hasattr(response, 'candidates') and response.candidates:
+                first_candidate = response.candidates[0]
+                if hasattr(first_candidate, 'content') and first_candidate.content:
+                    if hasattr(first_candidate.content, 'parts') and first_candidate.content.parts:
+                        parts_text = []
+                        for part in first_candidate.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                parts_text.append(part.text)
+                        if parts_text:
+                            bot_response_text = ''.join(parts_text)
+                            print(f"[{self.display_name}] Text extracted (candidates.content.parts)")
+            
+            # 空レスポンス時のリトライ
+            if not bot_response_text:
+                print(f"[{self.display_name}] Empty response. Retrying with thinking_level='minimal'...")
+                retry_config = types.GenerateContentConfig(
+                    system_instruction=full_system_instruction,
+                    tools=tools,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level='minimal'
+                    )
+                )
+                retry_response = await gemini_handler.generate_content_with_fallback(
+                    client=gemini_client,
+                    primary_model='gemini-3-flash-preview',
+                    contents=input_contents,
+                    config=retry_config
+                )
+                if retry_response and hasattr(retry_response, 'text') and retry_response.text:
+                    bot_response_text = retry_response.text
+                    print(f"[{self.display_name}] Retry successful (thinking_level=minimal)")
+                else:
+                    print(f"[{self.display_name}] Retry also failed")
+            
+            if not bot_response_text:
+                print(f"[{self.display_name}] Could not extract text from response")
+                bot_response_text = self.messages.ALICE_FILED
+                
+        except Exception as extract_error:
+            print(f"[{self.display_name}] Response extraction error: {extract_error}")
+            import traceback
+            traceback.print_exc()
+            bot_response_text = self.messages.ALICE_FILED
+        
+        return bot_response_text
+    
+    def run(self) -> None:
+        """Botを起動"""
+        token = os.getenv(self.discord_token_env)
+        if not token:
+            print(f"[ERROR] Discord token not found in environment variable: {self.discord_token_env}")
+            return
+        
+        print(f"[{self.display_name}] Starting bot...")
+        self.client.run(token)
