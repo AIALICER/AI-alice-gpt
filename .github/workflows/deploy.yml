@@ -35,6 +35,17 @@ jobs:
           # Clean up config (security)
           git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf
       
+      - name: Check compose file
+        run: |
+          cd /home/aosy/Docker/AI-Alice
+          if [ ! -f compose.yaml ]; then
+            echo "⚠️  compose.yaml not found! Restoring from git history..."
+            git show ece9f35:compose.yaml > compose.yaml
+            echo "✅ compose.yaml restored"
+          else
+            echo "✅ compose.yaml exists"
+          fi
+      
       - name: Rebuild containers
         run: |
           cd /home/aosy/Docker/AI-Alice
