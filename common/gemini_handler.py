@@ -11,6 +11,16 @@ from google.genai import types
 from .config_base import gemini_client
 
 
+def _is_timeout_error(error_str: str) -> bool:
+    return any(token in error_str.lower() for token in (
+        "timeout",
+        "timed out",
+        "read timed out",
+        "connect timeout",
+        "read timeout"
+    ))
+
+
 async def generate_content_with_fallback(client, primary_model: str, contents, config):
     """
     APIレートリミット(429)発生時に自動フォールバックするラッパー関数
@@ -79,12 +89,16 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
                 "RESOURCE_EXHAUSTED" in error_str or
                 "503" in error_str or 
                 "UNAVAILABLE" in error_str or
-                "overloaded" in error_str.lower()
+                "overloaded" in error_str.lower() or
+                _is_timeout_error(error_str)
             )
             
             if is_retryable:
-                if "503" in error_str or "UNAVAILABLE" in error_str:
-                    print(f"[INFO] Server overload detected. Waiting 2 seconds...")
+                if _is_timeout_error(error_str):
+                    print("[INFO] Timeout detected. Waiting 1 second before retry...")
+                    await asyncio.sleep(1)
+                elif "503" in error_str or "UNAVAILABLE" in error_str:
+                    print("[INFO] Server overload detected. Waiting 2 seconds...")
                     await asyncio.sleep(2)
                 
                 if model_name == models_to_try[-1][0]:
@@ -118,8 +132,8 @@ def generate_content_safe(client, primary_model: str, contents, config, fallback
             config=config
         )
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            print(f"[WARNING] {primary_model} rate limit. Falling back to {fallback_model}.")
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
+            print(f"[WARNING] {primary_model} rate limit/timeout. Falling back to {fallback_model}.")
             
             sys_instruct = None
             if hasattr(config, 'system_instruction'):
@@ -287,7 +301,8 @@ Example: level:high,search:false,minutes:10,task:meeting
 Example: level:medium,search:true,minutes:0,task:null"""
 
     try:
-        response = gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
             model='gemini-3-flash-preview',
             contents=router_prompt,
             config=types.GenerateContentConfig(

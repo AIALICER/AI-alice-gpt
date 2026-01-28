@@ -10,6 +10,7 @@
 import os
 import sqlite3
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # .envファイルから環境変数を読み込む
@@ -27,7 +28,23 @@ DISCORD_HISTORY_MAX_CHARS = 500  # 1メッセージあたりの最大文字数
 
 # === Gemini API設定 ===
 GEN_API_KEY = os.getenv("GEN_API_KEY")
-gemini_client = genai.Client(api_key=GEN_API_KEY)
+
+gemini_http_options = types.HttpOptions(
+    timeout=10,
+    retryOptions=types.HttpRetryOptions(
+        attempts=2,
+        initialDelay=0.5,
+        maxDelay=2.0,
+        expBase=2.0,
+        jitter=0.1,
+        httpStatusCodes=[429, 503]
+    )
+)
+
+gemini_client = genai.Client(
+    api_key=GEN_API_KEY,
+    http_options=gemini_http_options
+)
 
 
 def get_db_path(character_name: str) -> str:
