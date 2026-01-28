@@ -26,14 +26,25 @@ jobs:
         run: |
           cd /home/aosy/Docker/AI-Alice
           git config --global --add safe.directory /home/aosy/Docker/AI-Alice
-          # Use GITHUB_TOKEN for authentication by rewriting SSH URL to HTTPS
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           
-          # Pull using existing remote (origin is SSH, but rewritten to HTTPS)
+          # Check current remote URL and update if needed
+          current_url=$(git remote get-url origin)
+          if [[ "$current_url" == https://* ]]; then
+            # Already HTTPS, just need to add token
+            git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Aosy0/AI-Alice.git"
+          else
+            # SSH URL, rewrite to HTTPS with token
+            git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          fi
+          
           git pull origin main
           
-          # Clean up config (security)
-          git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf
+          # Restore original URL (clean up)
+          if [[ "$current_url" == https://* ]]; then
+            git remote set-url origin "$current_url"
+          else
+            git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf
+          fi
       
       - name: Check compose file
         run: |
