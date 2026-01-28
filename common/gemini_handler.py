@@ -8,7 +8,7 @@ Gemini API処理モジュール
 
 import asyncio
 from google.genai import types
-from .config_base import gemini_client
+from .config_base import gemini_client, gemini_client_fallback
 
 
 def _is_timeout_error(error_str: str) -> bool:
@@ -21,14 +21,26 @@ def _is_timeout_error(error_str: str) -> bool:
     ))
 
 
+def _should_try_fallback_key(e: Exception, error_str: str) -> bool:
+    """APIキーのフォールバックが必要か判定"""
+    return (
+        isinstance(e, TimeoutError) or
+        _is_timeout_error(error_str) or
+        "RESOURCE_EXHAUSTED" in error_str or
+        "429" in error_str or
+        "quota" in error_str.lower()
+    )
+
+
 async def generate_content_with_fallback(client, primary_model: str, contents, config):
     """
-    APIレートリミット(429)発生時に自動フォールバックするラッパー関数
+    APIレートリミット/タイムアウト発生時に自動フォールバックするラッパー関数
     
     フォールバック順序:
-    1. primary_model (gemini-3-flash-preview等)
-    2. gemini-2.5-flash (ThinkingConfig除外)
-    3. gemini-2.5-flash-lite (ThinkingConfig除外)
+    1. primary_model with client (gemini-3-flash-preview等)
+    2. primary_model with fallback_client (APIキー2)
+    3. gemini-2.5-flash (ThinkingConfig除外)
+    4. gemini-2.5-flash-lite (ThinkingConfig除外)
     
     Args:
         client: Geminiクライアント
@@ -45,6 +57,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
     ]
     
     models_to_try = [(primary_model, True)] + fallback_chain
+    used_fallback_key = False
     
     for model_name, is_primary in models_to_try:
         try:
@@ -82,6 +95,37 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
         except Exception as e:
             error_str = str(e)
             print(f"[ERROR] Model {model_name} failed: {error_str}")
+            
+            # APIキーフォールバックを試すべきか判定
+            if gemini_client_fallback and _should_try_fallback_key(e, error_str) and not used_fallback_key:
+                print("[INFO] Primary API key failed. Trying fallback API key (KEY_2)...")
+                used_fallback_key = True
+                # 同じモデルでフォールバックキーを試す
+                try:
+                    if model_name.startswith('gemini-2.5'):
+                        sys_instruct = None
+                        if hasattr(config, 'system_instruction'):
+                            sys_instruct = config.system_instruction
+                        current_tools = getattr(config, 'tools', None)
+                        new_config = types.GenerateContentConfig(
+                            tools=current_tools,
+                            system_instruction=sys_instruct
+                        )
+                        return await gemini_client_fallback.aio.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=new_config
+                        )
+                    else:
+                        return await gemini_client_fallback.aio.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=config
+                        )
+                except Exception as e2:
+                    error_str2 = str(e2)
+                    print(f"[ERROR] Fallback API key also failed: {error_str2}")
+                    # フォールバックキーでも失敗したので次のモデルへ
             
             # リトライ対象のエラー判定
             is_retryable = (
