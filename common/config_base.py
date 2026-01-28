@@ -9,6 +9,7 @@
 
 import os
 import sqlite3
+import httpx
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -30,8 +31,25 @@ DISCORD_HISTORY_MAX_CHARS = 500  # 1メッセージあたりの最大文字数
 GEN_API_KEY = os.getenv("GEN_API_KEY")
 GEN_API_KEY_2 = os.getenv("GEN_API_KEY_2")
 
+# httpxクライアントを作成（60秒のタイムアウト）
+httpx_timeout = httpx.Timeout(60.0, connect=60.0, read=60.0, write=60.0, pool=60.0)
+httpx_client_main = httpx.Client(timeout=httpx_timeout)
+httpx_client_fallback = httpx.Client(timeout=httpx_timeout)
+
 gemini_http_options = types.HttpOptions(
-    timeout=30,
+    httpxClient=httpx_client_main,
+    retryOptions=types.HttpRetryOptions(
+        attempts=2,
+        initialDelay=0.5,
+        maxDelay=2.0,
+        expBase=2.0,
+        jitter=0.1,
+        httpStatusCodes=[429, 503]
+    )
+)
+
+gemini_http_options_fallback = types.HttpOptions(
+    httpxClient=httpx_client_fallback,
     retryOptions=types.HttpRetryOptions(
         attempts=2,
         initialDelay=0.5,
@@ -53,7 +71,7 @@ gemini_client_fallback = None
 if GEN_API_KEY_2:
     gemini_client_fallback = genai.Client(
         api_key=GEN_API_KEY_2,
-        http_options=gemini_http_options
+        http_options=gemini_http_options_fallback
     )
 
 
