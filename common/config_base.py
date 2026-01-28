@@ -28,9 +28,10 @@ DISCORD_HISTORY_MAX_CHARS = 500  # 1メッセージあたりの最大文字数
 
 # === Gemini API設定 ===
 GEN_API_KEY = os.getenv("GEN_API_KEY")
+GEN_API_KEY_2 = os.getenv("GEN_API_KEY_2")
 
 gemini_http_options = types.HttpOptions(
-    timeout=10,
+    timeout=30,
     retryOptions=types.HttpRetryOptions(
         attempts=2,
         initialDelay=0.5,
@@ -41,10 +42,19 @@ gemini_http_options = types.HttpOptions(
     )
 )
 
+# メインクライアント（APIキー1）
 gemini_client = genai.Client(
     api_key=GEN_API_KEY,
     http_options=gemini_http_options
 )
+
+# フォールバッククライアント（APIキー2）
+gemini_client_fallback = None
+if GEN_API_KEY_2:
+    gemini_client_fallback = genai.Client(
+        api_key=GEN_API_KEY_2,
+        http_options=gemini_http_options
+    )
 
 
 def get_db_path(character_name: str) -> str:
