@@ -85,6 +85,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             
             # リトライ対象のエラー判定
             is_retryable = (
+                isinstance(e, TimeoutError) or
                 "429" in error_str or 
                 "RESOURCE_EXHAUSTED" in error_str or
                 "503" in error_str or 
@@ -94,7 +95,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             )
             
             if is_retryable:
-                if _is_timeout_error(error_str):
+                if isinstance(e, TimeoutError) or _is_timeout_error(error_str):
                     print("[INFO] Timeout detected. Waiting 1 second before retry...")
                     await asyncio.sleep(1)
                 elif "503" in error_str or "UNAVAILABLE" in error_str:
@@ -132,7 +133,7 @@ def generate_content_safe(client, primary_model: str, contents, config, fallback
             config=config
         )
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
+        if isinstance(e, TimeoutError) or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
             print(f"[WARNING] {primary_model} rate limit/timeout. Falling back to {fallback_model}.")
             
             sys_instruct = None

@@ -191,7 +191,7 @@ async def fetch_discord_history(
             del msg["_msg_id"]
             del msg["_timestamp"]
         
-        print(f"[Discord History] Retrieved {len(messages)} messages (channel: {channel.name}, attachments: {attachment_count})")
+        print(f"[Discord History] Retrieved {len(messages)} messages (channel: {getattr(channel, 'name', f'DM-{channel.id}')}, attachments: {attachment_count})")
         return messages
     
     except discord.Forbidden:
