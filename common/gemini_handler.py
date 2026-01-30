@@ -74,7 +74,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
                 )
                 
                 if not is_primary:
-                    print(f"[WARNING] Rate limit reached. Falling back to {model_name} (Thinking OFF)")
+                    print(f"[!] Fallback: {model_name} (no thinking)")
                 
                 return await client.aio.models.generate_content(
                     model=model_name,
@@ -84,7 +84,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             else:
                 # Gemini 3系はそのままThinkingConfigを使用
                 if not is_primary:
-                    print(f"[WARNING] Rate limit reached. Falling back to {model_name}")
+                    print(f"[!] Fallback: {model_name}")
                 
                 return await client.aio.models.generate_content(
                     model=model_name,
@@ -94,11 +94,12 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
                 
         except Exception as e:
             error_str = str(e)
-            print(f"[ERROR] Model {model_name} failed: {error_str}")
+            err_type = type(e).__name__
+            print(f"[X] {model_name}: {err_type}")
             
             # APIキーフォールバックを試すべきか判定
             if gemini_client_fallback and _should_try_fallback_key(e, error_str) and not used_fallback_key:
-                print("[INFO] Primary API key failed. Trying fallback API key (KEY_2)...")
+                print("[~] Trying KEY_2...")
                 used_fallback_key = True
                 # 同じモデルでフォールバックキーを試す
                 try:
@@ -123,8 +124,7 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
                             config=config
                         )
                 except Exception as e2:
-                    error_str2 = str(e2)
-                    print(f"[ERROR] Fallback API key also failed: {error_str2}")
+                    print(f"[X] KEY_2 failed: {type(e2).__name__}")
                     # フォールバックキーでも失敗したので次のモデルへ
             
             # リトライ対象のエラー判定
@@ -140,17 +140,17 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             
             if is_retryable:
                 if isinstance(e, TimeoutError) or _is_timeout_error(error_str):
-                    print("[INFO] Timeout detected. Waiting 1 second before retry...")
+                    print("[~] Retry in 1s...")
                     await asyncio.sleep(1)
                 elif "503" in error_str or "UNAVAILABLE" in error_str:
-                    print("[INFO] Server overload detected. Waiting 2 seconds...")
+                    print("[~] Overloaded, wait 2s...")
                     await asyncio.sleep(2)
                 
                 if model_name == models_to_try[-1][0]:
                     raise Exception(f"All models failed (retry limit): {e}")
                 continue
             else:
-                print(f"[ERROR] Non-retryable error: {type(e).__name__}: {error_str}")
+                print(f"[X] Fatal: {type(e).__name__}")
                 raise e
     
     raise Exception("Unexpected error: Fallback chain did not complete")
@@ -176,9 +176,9 @@ def generate_content_safe(client, primary_model: str, contents, config, fallback
             contents=contents,
             config=config
         )
-    except Exception as e:
-        if isinstance(e, TimeoutError) or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
-            print(f"[WARNING] {primary_model} rate limit/timeout. Falling back to {fallback_model}.")
+        except Exception as e:
+            if isinstance(e, TimeoutError) or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
+                print(f"[!] {primary_model} -> {fallback_model}")
             
             sys_instruct = None
             if hasattr(config, 'system_instruction'):
@@ -246,23 +246,18 @@ def determine_level_and_search_rule_based(prompt: str) -> dict | None:
     ]
     
     if any(kw in prompt_lower for kw in time_responses):
-        print("[Rule-based] Timer detection required, need API judgment")
         return None
     
     if len(prompt) <= 20 and any(p in prompt_lower for p in simple_greetings):
-        print("[Rule-based] Greeting pattern -> low, no search, no timer")
         return {'level': 'low', 'search': False, 'minutes': 0, 'task': "null"}
     
     if len(prompt) <= 15 and any(p in prompt_lower for p in simple_responses):
-        print("[Rule-based] Response pattern -> low, no search, no timer")
         return {'level': 'low', 'search': False, 'minutes': 0, 'task': "null"}
     
     if any(kw in prompt_lower for kw in code_keywords):
-        print("[Rule-based] Code pattern -> high, no search, no timer")
         return {'level': 'high', 'search': False, 'minutes': 0, 'task': "null"}
     
     if any(kw in prompt_lower for kw in search_required_keywords):
-        print("[Rule-based] Search required pattern -> high, search needed, no timer")
         return {'level': 'high', 'search': True, 'minutes': 0, 'task': "null"}
     
     return None
@@ -360,7 +355,6 @@ Example: level:medium,search:true,minutes:0,task:null"""
         )
         
         result = response.text.strip().lower()
-        print(f"[API Judgment] Result: {result}")
         
         level = 'medium'
         search = False
@@ -386,9 +380,8 @@ Example: level:medium,search:true,minutes:0,task:null"""
         if 'task' in result:
             task = result.split('task:')[1].split(',')[0].strip()
         
-        print(f"[API Judgment] Level: {level}, Search: {search}, Minutes: {minutes}, Task: {task}")
         return {'level': level, 'search': search, 'minutes': minutes, 'task': task}
             
     except Exception as e:
-        print(f"[API Judgment Skip] {e} -> Using default values")
+        print(f"[API] Err: {type(e).__name__}")
         return {'level': 'medium', 'search': False, 'minutes': 0, 'task': "null"}

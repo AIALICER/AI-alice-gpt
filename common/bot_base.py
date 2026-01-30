@@ -157,6 +157,9 @@ class CharacterBot:
                 channel_id = message.channel_mentions[0].id
                 prompt = prompt.replace(f'<#{channel_id}>', '')
             
+            # プロンプトなしのメンションかどうか判定（@Bot のみ）
+            is_empty_mention = self.client.user.mentioned_in(message) and not prompt
+            
             # 要約タスクのリセット
             if channel_id in self.summary_tasks:
                 self.summary_tasks[channel_id].cancel()
@@ -164,16 +167,18 @@ class CharacterBot:
                 db_handler.summarize_and_cleanup(self.db_path, channel_id)
             )
             
-            # 添付ファイルの処理
+            # 添付ファイルの処理（空メンション時は通常より多く読み込む）
             file_parts = []
             if message.attachments:
-                file_parts = await file_handler.process_attachments(message.attachments)
+                max_attachments = 10 if is_empty_mention else 5
+                file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
             
             # プロンプトまたは添付ファイルがある場合のみ応答
-            if prompt or file_parts:
+            # 空メンション時は必ず応答（履歴を読み込むため）
+            if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
                     await self._process_gemini_request(
-                        message, channel_id, current_channel_id, prompt, file_parts
+                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention
                     )
             return
     
@@ -183,9 +188,14 @@ class CharacterBot:
         channel_id: int,
         current_channel_id: int,
         prompt: str,
-        file_parts: list
+        file_parts: list,
+        is_empty_mention: bool = False
     ) -> None:
         """Gemini APIへのリクエストを処理"""
+        
+        # 履歴取得数の設定（空メンション時は拡張）
+        db_history_limit = 15 if is_empty_mention else 6
+        discord_history_limit = 20 if is_empty_mention else DISCORD_HISTORY_LIMIT
         
         # 推論レベルと検索要否の判定
         def get_history_func(ch_id, limit):
@@ -204,7 +214,8 @@ class CharacterBot:
         timer_second = judgment['minutes']
         timer_name = judgment['task']
         
-        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, Prompt: {prompt[:50] if prompt else '(file only)'}...")
+        prompt_display = '(empty mention)' if is_empty_mention else (prompt[:50] if prompt else '(file only)')
+        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, Prompt: {prompt_display}...")
         
         try:
             # 推論レベルが高い場合、思考中メッセージを送信
@@ -236,21 +247,25 @@ class CharacterBot:
             
             if prompt:
                 current_parts.append({"text": prompt + syslog})
+            elif is_empty_mention:
+                # 空メンション時は文脈理解用のメッセージを追加
+                current_parts.append({"text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog})
             if file_parts:
                 current_parts.extend(file_parts)
             
-            # 履歴の取得
-            history = db_handler.get_recent_history(self.db_path, channel_id, limit=6)
+            # 履歴の取得（空メンション時は拡張）
+            history = db_handler.get_recent_history(self.db_path, channel_id, limit=db_history_limit)
             
-            # Discord履歴の取得とマージ
+            # Discord履歴の取得とマージ（空メンション時は拡張）
             if ENABLE_DISCORD_HISTORY:
                 discord_history = await message_sender.fetch_discord_history(
                     message.channel,
-                    limit=DISCORD_HISTORY_LIMIT,
+                    limit=discord_history_limit,
                     bot_id=self.client.user.id,
                     max_chars=DISCORD_HISTORY_MAX_CHARS
                 )
-                history = message_sender.merge_histories(discord_history, history, max_total=DISCORD_HISTORY_LIMIT)
+                max_total = discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
+                history = message_sender.merge_histories(discord_history, history, max_total=max_total)
             
             input_contents = history + [{
                 "role": "user",
@@ -272,7 +287,6 @@ class CharacterBot:
                     "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: " + 
                     memories
                 )
-                print(f"[{self.display_name}] Executing search\n")
             else:
                 full_system_instruction = (
                     enhanced_instruction +
@@ -338,7 +352,6 @@ class CharacterBot:
             # 方法1: response.text を直接取得
             if response and hasattr(response, 'text') and response.text:
                 bot_response_text = response.text
-                print(f"[{self.display_name}] Text extracted (response.text)")
             
             # 方法2: candidates.content.parts から取得
             if not bot_response_text and response and hasattr(response, 'candidates') and response.candidates:
@@ -351,11 +364,10 @@ class CharacterBot:
                                 parts_text.append(part.text)
                         if parts_text:
                             bot_response_text = ''.join(parts_text)
-                            print(f"[{self.display_name}] Text extracted (candidates.content.parts)")
             
             # 空レスポンス時のリトライ
             if not bot_response_text:
-                print(f"[{self.display_name}] Empty response. Retrying with thinking_level='minimal'...")
+                print(f"[{self.display_name}] Empty, retrying...")
                 retry_config = types.GenerateContentConfig(
                     system_instruction=full_system_instruction,
                     tools=tools,
@@ -371,18 +383,15 @@ class CharacterBot:
                 )
                 if retry_response and hasattr(retry_response, 'text') and retry_response.text:
                     bot_response_text = retry_response.text
-                    print(f"[{self.display_name}] Retry successful (thinking_level=minimal)")
                 else:
-                    print(f"[{self.display_name}] Retry also failed")
+                    print(f"[{self.display_name}] Retry failed")
             
             if not bot_response_text:
-                print(f"[{self.display_name}] Could not extract text from response")
+                print(f"[{self.display_name}] Extract failed")
                 bot_response_text = self.messages.ALICE_FILED
                 
         except Exception as extract_error:
-            print(f"[{self.display_name}] Response extraction error: {extract_error}")
-            import traceback
-            traceback.print_exc()
+            print(f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}")
             bot_response_text = self.messages.ALICE_FILED
         
         return bot_response_text
