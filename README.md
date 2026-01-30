@@ -17,33 +17,6 @@
 - Discord Bot Token
 - Google Gemini API Key (Gen AI)
 
-## 🚀 セットアップ
-
-### 1. 必要なパッケージのインストール
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. 環境変数の設定
-
-`.env` ファイルをプロジェクトのルートディレクトリに作成し、以下の内容を設定してください：
-
-```env
-DISCORD_TOKEN=your_discord_bot_token_here
-GEN_API_KEY=your_gemini_api_key_here
-```
-
-**必要なAPI Keyの取得方法:**
-- **Discord Bot Token**: [Discord Developer Portal](https://discord.com/developers/applications) でBotを作成
-- **Gemini API Key**: [Google AI Studio](https://aistudio.google.com/app/apikey) で取得
-
-### 3. Botの起動
-
-```bash
-python A1-LS.py
-```
-
 ## 💬 使い方
 
 ### メンション方式（推奨）
@@ -95,10 +68,20 @@ Botは質問の複雑さに応じて3つの推論レベルを自動選択しま�
 
 ## 🎨 キャラクター設定
 
-天童アリスは「ブルーアーカイブ」に登場するキャラクターで、以下の特徴があります：
+### 天童アリス
+「ブルーアーカイブ」に登場するキャラクターで、以下の特徴があります：
 - 夢は勇者になること
 - 武器は光の剣「スーパーノヴァ」
 - ミレニアムサイエンススクールのゲーム開発部に所属
 - 一人称は「アリス」、二人称は「先生」
 
-詳細な設定はスクリプト内の `SYSTEM_INSTRUCTION` に記載されています。
+### ケイ（Key）
+「ブルーアーカイブ」に登場するキャラクターで、以下の特徴があります：
+- 元は天童アリスに内包されていたトリガーAI、現在はミレニアムサイエンススクール・ゲーム開発部の一員
+- アリスへの使命感が強く、彼女を守ることが最優先
+- ツンデレ（デレ多め）な性格で、「ケイちゃん」と呼ばれるのは恥ずかしがる
+- タブレットを常備し、ゲーム好き
+- 一人称は「私」、二人称は「先生」
+- 白い髪、赤い瞳、赤いヘイロー
+
+詳細な設定は各キャラクターの `SYSTEM_INSTRUCTION` に記載されています。
