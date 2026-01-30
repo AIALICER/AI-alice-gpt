@@ -176,9 +176,9 @@ def generate_content_safe(client, primary_model: str, contents, config, fallback
             contents=contents,
             config=config
         )
-        except Exception as e:
-            if isinstance(e, TimeoutError) or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
-                print(f"[!] {primary_model} -> {fallback_model}")
+    except Exception as e:
+        if isinstance(e, TimeoutError) or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or _is_timeout_error(str(e)):
+            print(f"[!] {primary_model} -> {fallback_model}")
             
             sys_instruct = None
             if hasattr(config, 'system_instruction'):
