@@ -37,7 +37,8 @@ jobs:
             git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           fi
           
-          git pull origin main
+          # 分岐したブランチをマージ方式で統合
+          git pull --no-rebase origin main
           
           # Restore original URL (clean up)
           if [[ "$current_url" == https://* ]]; then
