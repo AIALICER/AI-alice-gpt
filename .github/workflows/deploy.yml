@@ -27,6 +27,10 @@ jobs:
           cd /home/aosy/Docker/AI-Alice
           git config --global --add safe.directory /home/aosy/Docker/AI-Alice
           
+          # Gitユーザー設定（マージコミット用）
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
           # Check current remote URL and update if needed
           current_url=$(git remote get-url origin)
           if [[ "$current_url" == https://* ]]; then
