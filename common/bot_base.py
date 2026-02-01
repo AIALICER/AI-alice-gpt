@@ -24,6 +24,7 @@ from . import db_handler
 from . import file_handler
 from . import timer_handler
 from . import message_sender
+from . import url_handler
 
 
 class CharacterBot:
@@ -173,12 +174,19 @@ class CharacterBot:
                 max_attachments = 10 if is_empty_mention else 5
                 file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
             
+            # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
+            url_context = ""
+            if prompt:
+                url_contents = await url_handler.process_urls_in_text(prompt)
+                if url_contents:
+                    url_context = url_handler.format_url_contents(url_contents)
+            
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
                     await self._process_gemini_request(
-                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention
+                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention, url_context
                     )
             return
     
@@ -189,7 +197,8 @@ class CharacterBot:
         current_channel_id: int,
         prompt: str,
         file_parts: list,
-        is_empty_mention: bool = False
+        is_empty_mention: bool = False,
+        url_context: str = ""
     ) -> None:
         """Gemini APIへのリクエストを処理"""
         
@@ -266,6 +275,24 @@ class CharacterBot:
                 )
                 max_total = discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
                 history = message_sender.merge_histories(discord_history, history, max_total=max_total)
+            
+            # 履歴からURLを抽出してコンテンツを取得
+            history_url_context = ""
+            for history_item in history:
+                if 'parts' in history_item:
+                    for part in history_item['parts']:
+                        if 'text' in part:
+                            url_contents = await url_handler.process_urls_in_text(part['text'])
+                            if url_contents:
+                                history_url_context += url_handler.format_url_contents(url_contents)
+            
+            # URLコンテンツをプロンプトに追加
+            if url_context or history_url_context:
+                url_parts_text = url_context + history_url_context
+                if prompt:
+                    current_parts[0]["text"] = prompt + syslog + url_parts_text
+                elif is_empty_mention:
+                    current_parts[0]["text"] = "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog + url_parts_text
             
             input_contents = history + [{
                 "role": "user",

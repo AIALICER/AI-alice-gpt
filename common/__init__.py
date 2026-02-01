@@ -11,6 +11,7 @@ common - Discord Bot共通モジュール
 - file_handler: ファイル処理（添付ファイル処理）
 - timer_handler: タイマー処理
 - message_sender: メッセージ送信処理
+- url_handler: URL処理（URL抽出、コンテンツ取得）
 - bot_base: Discord Bot基盤クラス
 """
 
