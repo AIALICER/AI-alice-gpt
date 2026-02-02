@@ -23,4 +23,4 @@ SYSTEM_INSTRUCTION_PATH = "characters/Key/system_instruction.txt"
 
 # 相方Bot情報（相互会話用）
 PARTNER_BOT_ID = 1338174636447322144  # アリスのBot ID
-PARTNER_BOT_NAME = "アリス"
+PARTNER_BOT_NAME = "AIアリス"
