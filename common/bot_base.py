@@ -9,8 +9,9 @@ from discord import app_commands
 import re
 import os
 import asyncio
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Set
 from google.genai import types
+import time
 
 from .config_base import (
     gemini_client,
@@ -80,6 +81,11 @@ class CharacterBot:
         self.summary_tasks: Dict[int, asyncio.Task] = {}
         self.active_timers: Dict[int, List[Dict[str, Any]]] = {}
         
+        # メッセージ重複防止（メッセージIDとタイムスタンプの管理）
+        self._processed_message_ids: Set[int] = set()
+        self._message_id_timestamps: Dict[int, float] = {}
+        self._message_locks: Dict[int, asyncio.Lock] = {}
+        
         # イベントハンドラの設定
         self._setup_events()
     
@@ -91,6 +97,19 @@ class CharacterBot:
         except FileNotFoundError:
             print(f"[ERROR] System instruction file not found: {self.system_instruction_path}")
             return ""
+    
+    def _cleanup_old_message_ids(self, current_time: float) -> None:
+        """5分経過した古いメッセージIDをクリーンアップ"""
+        timeout = 300  # 5分
+        expired_ids = [
+            msg_id for msg_id, timestamp in self._message_id_timestamps.items()
+            if current_time - timestamp > timeout
+        ]
+        for msg_id in expired_ids:
+            self._processed_message_ids.discard(msg_id)
+            self._message_id_timestamps.pop(msg_id, None)
+            if msg_id in self._message_locks:
+                del self._message_locks[msg_id]
     
     def _setup_events(self) -> None:
         """Discordイベントハンドラを設定"""
@@ -123,6 +142,34 @@ class CharacterBot:
         # 自分自身のメッセージは無視
         if message.author == self.client.user:
             return
+        
+        # メッセージIDによる重複チェック
+        message_id = message.id
+        current_time = time.time()
+        
+        # 古いメッセージIDをクリーンアップ（5分経過したもの）
+        self._cleanup_old_message_ids(current_time)
+        
+        # 既に処理済みのメッセージは無視
+        if message_id in self._processed_message_ids:
+            print(f"[{self.display_name}] Duplicate message ignored: ID={message_id}")
+            return
+        
+        # このメッセージの処理ロックを取得
+        if message_id not in self._message_locks:
+            self._message_locks[message_id] = asyncio.Lock()
+        
+        # ロックを取得して重複処理を防止
+        async with self._message_locks[message_id]:
+            # 二重チェック（ロック取得後に再確認）
+            if message_id in self._processed_message_ids:
+                print(f"[{self.display_name}] Duplicate message ignored (after lock): ID={message_id}")
+                return
+            
+            # 処理済みとしてマーク
+            self._processed_message_ids.add(message_id)
+            self._message_id_timestamps[message_id] = current_time
+            print(f"[{self.display_name}] Processing message: ID={message_id}, Content='{message.content[:50]}...'")
         
         current_channel_id = message.channel.id
         channel_id = current_channel_id
