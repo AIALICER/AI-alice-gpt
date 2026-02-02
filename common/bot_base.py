@@ -130,14 +130,28 @@ class CharacterBot:
             await self._handle_message(message)
         @self.client.tree.context_menu(name=self.messages.SUMMARY_COMAND)
         async def analyze_with_key(interaction: discord.Interaction, message: discord.Message):
-            # AIの処理には時間がかかるため、まず「考え中」の状態にする
-            await interaction.response.defer(ephemeral=True)
+            # 1. 応答を返す（ephemeral=True で自分だけに）
+            await interaction.response.send_message("解析専用のプライベートスレッドを作成中...", ephemeral=True)
             
-            # 既存のメッセージ処理ロジックを呼び出す
-            # ※ interaction.followup を使って結果を返すように _process_gemini_request の調整が必要な場合があります
-            await self._handle_message(message, force_process=True, interaction=interaction) 
+            # 2. プライベートスレッドの作成
+            # ここでは引数の message を使うので self. は不要！
+            thread = await message.channel.create_thread(
+                name=f"解析：{message.author.display_name}の投稿",
+                type=discord.ChannelType.private_thread,
+                auto_archive_duration=60
+            )
             
-    async def _handle_message(self, message: discord.Message, force_process: bool = False, interaction: discord.Interaction = None) -> None:
+            # 3. ユーザーをスレッドに追加
+            # ここでも引数の interaction を使うので self. は不要！
+            await thread.add_user(interaction.user)
+            
+            # 4. スレッド開始の合図
+            await thread.send(f"{interaction.user.mention} "+self.messages.MSG_SUMMARY)
+
+            # 5. 解析実行（ここだけはクラスのメソッドを呼ぶので self. が必要！）
+            await self._handle_message(message, force_process=True, target_channel=thread)
+    async def _handle_message(self, message: discord.Message, force_process: bool = False, 
+                              interaction: discord.Interaction = None,target_channel: discord.Thread = None ) -> None:
         """メッセージハンドラ（メインロジック）"""
         # 自分自身のメッセージは無視
         if message.author == self.client.user:
@@ -249,7 +263,7 @@ class CharacterBot:
             if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
                     await self._process_gemini_request(
-                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention, url_context,interaction=interaction 
+                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention, url_context,interaction=interaction,target_channel=target_channel 
                     )
             return
     
@@ -262,7 +276,8 @@ class CharacterBot:
         file_parts: list,
         is_empty_mention: bool = False,
         url_context: str = "",
-        interaction: discord.Interaction = None  # ← これを追加！
+        interaction: discord.Interaction = None,  # ← これを追加！
+        target_channel: discord.Thread = None
     ) -> None:
         """Gemini APIへのリクエストを処理"""
         
@@ -419,17 +434,18 @@ class CharacterBot:
             db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
             
             print(f"[{self.display_name}] DB saved: {save_user_text}")
-            if interaction:
-                # 右クリックメニュー経由なら、その本人にだけ返す
-                # defer(ephemeral=True) していれば、ここも自分にだけ見える
-                await interaction.followup.send(bot_response_text, ephemeral=True)
+            dest = target_channel if target_channel else message.channel
+
+            if interaction and not target_channel:
+            # 従来通り、自分だけにエフェメラルで返す場合
+              await interaction.followup.send(bot_response_text, ephemeral=True)
             else:
-                # 通常のメンションなら、チャンネル全員に見えるように送る
-                await message_sender.send_long_message(
-                    message.channel, 
-                    bot_response_text,
-                    long_message_notice=self.messages.ALI_LONG_MES
-                )
+    # スレッドが指定されている、または通常のチャットの場合
+             await message_sender.send_long_message(
+              dest, # ここを message.channel から dest に変更
+              bot_response_text,
+              long_message_notice=self.messages.ALI_LONG_MES
+            )
             
             
         except Exception as e:
