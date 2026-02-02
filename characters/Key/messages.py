@@ -18,6 +18,7 @@ MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です。"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了します。"
 
 # その他
+SUMMARY_COMAND="ケイに解析させる"
 ALI_LONG_MES = "応答が長いため、ファイルを生成します。"
 DB_DEL_SUC = "履歴を削除しました。"
 DB_DEL_FIL = "履歴の削除に失敗しました。"

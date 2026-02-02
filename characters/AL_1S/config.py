@@ -11,7 +11,6 @@ DISPLAY_NAME = "アリス"
 # コマンドパターン（全角/半角の!、全角/半角スペース、改行に対応）
 COMMAND_PATTERN = re.compile(r'^[!！]アリス[ 　\n]')
 HISTORY_CLEAR_COMMAND = "!アリス 履歴消去"
-
 # 環境変数キー
 DISCORD_TOKEN_ENV = "DISCORD_TOKEN"
 

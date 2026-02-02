@@ -11,7 +11,7 @@ DISPLAY_NAME = "ケイ"
 # コマンドパターン（全角/半角の!、全角/半角スペース、改行に対応）
 COMMAND_PATTERN = re.compile(r'^[!！]ケイ[ 　\n]')
 HISTORY_CLEAR_COMMAND = "!ケイ 履歴消去"
-
+SUMMARY_COMAND="ケイに解析させる"
 # 環境変数キー
 DISCORD_TOKEN_ENV = "KEI_DISCORD_TOKEN"
 
