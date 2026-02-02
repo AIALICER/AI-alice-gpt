@@ -5,6 +5,7 @@ Discord Bot基盤クラス
 """
 
 import discord
+from discord import app_commands
 import re
 import os
 import asyncio
@@ -74,7 +75,7 @@ class CharacterBot:
         intents.messages = True
         intents.message_content = True
         self.client = discord.Client(intents=intents)
-        
+        self.client.tree = app_commands.CommandTree(self.client)
         # 状態管理
         self.summary_tasks: Dict[int, asyncio.Task] = {}
         self.active_timers: Dict[int, List[Dict[str, Any]]] = {}
@@ -97,12 +98,27 @@ class CharacterBot:
         @self.client.event
         async def on_ready():
             print(f"[{self.display_name}] Logged in as {self.client.user}")
-        
+            # テストするサーバーのID（数字）をここに入れる
+            target_guild = discord.Object(id=751791380837171340) 
+    
+            # このサーバーにコマンドをコピーして同期
+            self.client.tree.copy_global_to(guild=target_guild)
+            await self.client.tree.sync(guild=target_guild)
+    
+            print(f"[{self.display_name}] {self.client.user} サーバー限定同期完了！")
         @self.client.event
         async def on_message(message):
             await self._handle_message(message)
-    
-    async def _handle_message(self, message: discord.Message) -> None:
+        @self.client.tree.context_menu(name=self.messages.SUMMARY_COMAND)
+        async def analyze_with_key(interaction: discord.Interaction, message: discord.Message):
+            # AIの処理には時間がかかるため、まず「考え中」の状態にする
+            await interaction.response.defer(ephemeral=True)
+            
+            # 既存のメッセージ処理ロジックを呼び出す
+            # ※ interaction.followup を使って結果を返すように _process_gemini_request の調整が必要な場合があります
+            await self._handle_message(message, force_process=True, interaction=interaction) 
+            
+    async def _handle_message(self, message: discord.Message, force_process: bool = False, interaction: discord.Interaction = None) -> None:
         """メッセージハンドラ（メインロジック）"""
         # 自分自身のメッセージは無視
         if message.author == self.client.user:
@@ -131,7 +147,7 @@ class CharacterBot:
         # メンションまたはコマンドパターンのチェック
         command_match = self.command_pattern.match(message.content)
         
-        if self.client.user.mentioned_in(message) or command_match:
+        if self.client.user.mentioned_in(message) or command_match or force_process:
             # タイマー状況確認
             if "タイマー" in message.content and ("残り" in message.content or "状況" in message.content):
                 status_message = timer_handler.get_remaining_timers(
@@ -147,12 +163,12 @@ class CharacterBot:
             
             # プロンプトの抽出
             if self.client.user.mentioned_in(message):
-                prompt = message.content.replace(f'<@{self.client.user.id}>', '').replace(f'<@!{self.client.user.id}>', '').strip()
+             prompt = message.content.replace(f'<@{self.client.user.id}>', '').replace(f'<@!{self.client.user.id}>', '').strip()
             elif command_match:
-                prompt = message.content[command_match.end():].strip()
+             prompt = message.content[command_match.end():].strip()
             else:
-                prompt = ""
-            
+             # 右クリック（force_process）時は、メッセージ全文をプロンプトにする
+             prompt = message.content
             # チャンネルメンションの処理
             if message.channel_mentions:
                 channel_id = message.channel_mentions[0].id
@@ -186,7 +202,7 @@ class CharacterBot:
             if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
                     await self._process_gemini_request(
-                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention, url_context
+                        message, channel_id, current_channel_id, prompt, file_parts, is_empty_mention, url_context,interaction=interaction 
                     )
             return
     
@@ -198,7 +214,8 @@ class CharacterBot:
         prompt: str,
         file_parts: list,
         is_empty_mention: bool = False,
-        url_context: str = ""
+        url_context: str = "",
+        interaction: discord.Interaction = None  # ← これを追加！
     ) -> None:
         """Gemini APIへのリクエストを処理"""
         
@@ -229,12 +246,14 @@ class CharacterBot:
         try:
             # 推論レベルが高い場合、思考中メッセージを送信
             if thinking_level == 'high':
-                await message.channel.send(self.messages.ALI_THI)
+                if not interaction:
+                    await message.channel.send(self.messages.ALI_THI)
             
             # 検索が必要な場合
             tools = []
             if needs_search:
-                await message.channel.send(self.messages.ALI_SUR)
+                if not interaction:
+                    await message.channel.send(self.messages.ALI_SUR)
                 tools.append(types.Tool(google_search=types.GoogleSearch()))
             
             # タイマーの設定
@@ -353,11 +372,18 @@ class CharacterBot:
             db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
             
             print(f"[{self.display_name}] DB saved: {save_user_text}")
-            await message_sender.send_long_message(
-                message.channel, 
-                bot_response_text,
-                long_message_notice=self.messages.ALI_LONG_MES
-            )
+            if interaction:
+                # 右クリックメニュー経由なら、その本人にだけ返す
+                # defer(ephemeral=True) していれば、ここも自分にだけ見える
+                await interaction.followup.send(bot_response_text, ephemeral=True)
+            else:
+                # 通常のメンションなら、チャンネル全員に見えるように送る
+                await message_sender.send_long_message(
+                    message.channel, 
+                    bot_response_text,
+                    long_message_notice=self.messages.ALI_LONG_MES
+                )
+            
             
         except Exception as e:
             print(f"[{self.display_name}] Error: {e}")

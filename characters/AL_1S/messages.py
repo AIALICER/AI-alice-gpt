@@ -18,6 +18,7 @@ MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です！"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了です！"
 
 # その他
+SUMMARY_COMAND="アリスに解析させる"
 ALI_LONG_MES = "応答が長すぎるため，ファイルの生成を行います！"
 DB_DEL_SUC = "了解です！このチャンネルの記憶をリセットしました！"
 DB_DEL_FIL = "ごめんなさい、履歴の消去に失敗しました…"
