@@ -2,6 +2,9 @@
 ケイ用メッセージテンプレート
 """
 
+# 相方Bot情報（configからインポート）
+from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
+
 # エラーメッセージ
 ALICE_FILED = "……エラーが発生しました。修復を試みます。"
 ERR_REBOOT = "システムに異常が発生しました。再起動します。\n詳細: {error_detail}"

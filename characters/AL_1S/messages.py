@@ -2,6 +2,9 @@
 アリス用メッセージテンプレート
 """
 
+# 相方Bot情報（configからインポート）
+from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
+
 # エラーメッセージ
 ALICE_FILED = "アリス,メッセージ出力に失敗しました...デバッグ作業が必要かもしれません！"
 ERR_REBOOT = "エラーが発生しました…アリス、リブートします。\n詳細: {error_detail}"

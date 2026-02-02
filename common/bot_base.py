@@ -111,6 +111,13 @@ class CharacterBot:
             if msg_id in self._message_locks:
                 del self._message_locks[msg_id]
     
+    def _contains_partner_mention(self, text: str) -> bool:
+        """応答に相方Botへのメンションが含まれるかチェック"""
+        partner_id = getattr(self.messages, 'PARTNER_BOT_ID', None)
+        if not partner_id:
+            return False
+        return f'<@{partner_id}>' in text or f'<@!{partner_id}>' in text
+    
     def _setup_events(self) -> None:
         """Discordイベントハンドラを設定"""
         
@@ -434,6 +441,11 @@ class CharacterBot:
             db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
             
             print(f"[{self.display_name}] DB saved: {save_user_text}")
+            
+            # 相方Botへのメンション検出とログ出力
+            if self._contains_partner_mention(bot_response_text):
+                print(f"[{self.display_name}] Partner mention detected in response")
+            
             dest = target_channel if target_channel else message.channel
 
             if interaction and not target_channel:
@@ -442,10 +454,10 @@ class CharacterBot:
             else:
     # スレッドが指定されている、または通常のチャットの場合
              await message_sender.send_long_message(
-              dest, # ここを message.channel から dest に変更
-              bot_response_text,
-              long_message_notice=self.messages.ALI_LONG_MES
-            )
+               dest, # ここを message.channel から dest に変更
+               bot_response_text,
+               long_message_notice=self.messages.ALI_LONG_MES
+             )
             
             
         except Exception as e:

@@ -24,3 +24,7 @@ SPECIAL_COMMANDS = {
 
 # システムインストラクションパス
 SYSTEM_INSTRUCTION_PATH = "characters/AL_1S/system_instruction.txt"
+
+# 相方Bot情報（相互会話用）
+PARTNER_BOT_ID = 1338274620373676082  # ケイのBot ID
+PARTNER_BOT_NAME = "ケイ"
