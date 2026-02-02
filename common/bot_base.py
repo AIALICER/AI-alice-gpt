@@ -149,7 +149,7 @@ class CharacterBot:
             await thread.send(f"{interaction.user.mention} "+self.messages.MSG_SUMMARY)
 
             # 5. 解析実行（ここだけはクラスのメソッドを呼ぶので self. が必要！）
-            await self._handle_message(message, force_process=True, target_channel=thread)
+            await self._handle_message(message, force_process=True,interaction=True, target_channel=thread)
     async def _handle_message(self, message: discord.Message, force_process: bool = False, 
                               interaction: discord.Interaction = None,target_channel: discord.Thread = None ) -> None:
         """メッセージハンドラ（メインロジック）"""
