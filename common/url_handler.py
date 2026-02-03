@@ -26,6 +26,18 @@ EXCLUDED_EXTENSIONS = (
     '.exe', '.dmg', '.pkg', '.deb', '.rpm'
 )
 
+# 除外するドメイン（動画・SNSサイトなど）
+EXCLUDED_DOMAINS = (
+    'youtube.com', 'youtu.be', 'www.youtube.com',
+    'twitter.com', 'x.com', 'www.twitter.com', 'www.x.com',
+    'facebook.com', 'www.facebook.com',
+    'instagram.com', 'www.instagram.com',
+    'tiktok.com', 'www.tiktok.com',
+    'twitch.tv', 'www.twitch.tv',
+    'nicovideo.jp', 'www.nicovideo.jp', 'nico.ms',
+    'bilibili.com', 'www.bilibili.com',
+)
+
 # 最大コンテンツ長さ（文字数）
 MAX_CONTENT_LENGTH = 8000
 
@@ -64,6 +76,12 @@ def extract_urls(text: str) -> List[str]:
         parsed = urlparse(url)
         path = parsed.path.lower()
         if any(path.endswith(ext) for ext in EXCLUDED_EXTENSIONS):
+            continue
+        
+        # 除外するドメインをチェック
+        domain = parsed.netloc.lower()
+        if any(excluded in domain for excluded in EXCLUDED_DOMAINS):
+            print(f"[URL Handler] Excluded domain: {domain}")
             continue
         
         unique_urls.append(url)
