@@ -303,7 +303,6 @@ class CharacterBot:
             get_recent_history_func=get_history_func,
             character_name=self.display_name
         )
-        print(judgment)
         thinking_level = judgment['level']
         needs_search = judgment['search']
         timer_second = judgment['minutes']
