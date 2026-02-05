@@ -388,4 +388,4 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
             
     except Exception as e:
         print(f"[API] Err: {type(e).__name__}")
-        return {'level': 'medium', 'search': False, 'minutes': 0, 'task': "null"}
+        return {'level': 'medium', 'search': False, 'minutes': 0, 'task': "null",'reference':False}
