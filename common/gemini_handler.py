@@ -287,10 +287,10 @@ async def determine_level_and_search(
         dict: {'level': 'low/medium/high', 'search': True/False, 'minutes': float, 'task': str}
     """
     # ルールベースで事前判定
-    rule_result = determine_level_and_search_rule_based(prompt)
-    if rule_result is not None:
-        return rule_result
-    
+    #rule_result = determine_level_and_search_rule_based(prompt)
+    #if rule_result is not None:
+        #return rule_result
+    print("a")
     # API統合判定
     history = []
     if get_recent_history_func:
@@ -326,7 +326,9 @@ async def determine_level_and_search(
 - "1 hour" = **60**, "30 seconds" = **0.5**
 - If not needed or time is unclear = **0**
 - **task**: Timer description (e.g., "cup noodles", "meeting"). If not needed = **null**
-
+## Judgment 4: Reference Necessity
+- **true**: The message refers to previous turns using pronouns or implicit references. (e.g., "Why?", "Explain it more", "Fix that code", "What about him?", "I see")
+- **false**: The message is self-contained and can be understood without any history. (e.g., "Hello", "How is the weather?", "Write a Python code for a calculator")
 ## Conversation History
 {history_text if history_text else "(None)"}
 
@@ -335,10 +337,10 @@ async def determine_level_and_search(
 {"*File attached" if has_attachments else ""}
 
 ## Output Format (strict)
-level:low/medium/high,search:true/false,minutes:int,task:str
+level:low/medium/high,search:true/false,minutes:int,task:str,reference:true/false
 
-Example: level:high,search:false,minutes:10,task:meeting
-Example: level:medium,search:true,minutes:0,task:null"""
+Example: level:high,search:false,minutes:10,task:meeting,reference:true
+Example: level:medium,search:true,minutes:0,task:null,reference:false"""
 
     try:
         response = await asyncio.to_thread(
@@ -360,7 +362,7 @@ Example: level:medium,search:true,minutes:0,task:null"""
         search = False
         minutes = 0
         task = ""
-        
+        reference=False
         if 'level:' in result:
             level_part = result.split('level:')[1].split(',')[0].strip()
             if level_part in ['low', 'medium', 'high']:
@@ -379,8 +381,10 @@ Example: level:medium,search:true,minutes:0,task:null"""
         
         if 'task' in result:
             task = result.split('task:')[1].split(',')[0].strip()
-        
-        return {'level': level, 'search': search, 'minutes': minutes, 'task': task}
+        if 'reference' in result:
+            reference_part = result.split('reference:')[1].split(',')[0].strip()
+            reference = reference_part == 'true'
+        return {'level': level, 'search': search, 'minutes': minutes, 'task': task,'reference':reference}
             
     except Exception as e:
         print(f"[API] Err: {type(e).__name__}")

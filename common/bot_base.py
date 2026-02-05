@@ -308,9 +308,10 @@ class CharacterBot:
         needs_search = judgment['search']
         timer_second = judgment['minutes']
         timer_name = judgment['task']
-        
+        needs_history=judgment['reference']
+
         prompt_display = '(empty mention)' if is_empty_mention else (prompt[:50] if prompt else '(file only)')
-        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, Prompt: {prompt_display}...")
+        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, History: {needs_history},Prompt: {prompt_display}...")
         
         try:
             # 推論レベルが高い場合、思考中メッセージを送信
@@ -324,7 +325,6 @@ class CharacterBot:
                 if not interaction:
                     await message.channel.send(self.messages.ALI_SUR)
                 tools.append(types.Tool(google_search=types.GoogleSearch()))
-            
             # タイマーの設定
             if timer_second != 0:
                 t_name = str(timer_name) if timer_name else "Timer"
@@ -349,12 +349,12 @@ class CharacterBot:
                 current_parts.append({"text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog})
             if file_parts:
                 current_parts.extend(file_parts)
-            
+            if needs_history:
             # 履歴の取得（空メンション時は拡張）
-            history = db_handler.get_recent_history(self.db_path, channel_id, limit=db_history_limit)
+             history = db_handler.get_recent_history(self.db_path, channel_id, limit=db_history_limit)
             
-            # Discord履歴の取得とマージ（空メンション時は拡張）
-            if ENABLE_DISCORD_HISTORY:
+             # Discord履歴の取得とマージ（空メンション時は拡張）
+             if ENABLE_DISCORD_HISTORY:
                 discord_history = await message_sender.fetch_discord_history(
                     message.channel,
                     limit=discord_history_limit,
@@ -363,7 +363,8 @@ class CharacterBot:
                 )
                 max_total = discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
                 history = message_sender.merge_histories(discord_history, history, max_total=max_total)
-            
+            else:
+             history=[]
             # 履歴からURLを抽出してコンテンツを取得
             history_url_context = ""
             for history_item in history:
@@ -445,7 +446,7 @@ class CharacterBot:
             # 相方Botへのメンション検出とログ出力
             if self._contains_partner_mention(bot_response_text):
                 print(f"[{self.display_name}] Partner mention detected in response")
-            
+            print(history)
             dest = target_channel if target_channel else message.channel
 
             if interaction and not target_channel:
