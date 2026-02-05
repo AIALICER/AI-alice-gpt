@@ -290,7 +290,6 @@ async def determine_level_and_search(
     #rule_result = determine_level_and_search_rule_based(prompt)
     #if rule_result is not None:
         #return rule_result
-    print("a")
     # API統合判定
     history = []
     if get_recent_history_func:
