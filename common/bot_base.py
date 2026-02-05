@@ -303,7 +303,7 @@ class CharacterBot:
             get_recent_history_func=get_history_func,
             character_name=self.display_name
         )
-        
+        print(judgment)
         thinking_level = judgment['level']
         needs_search = judgment['search']
         timer_second = judgment['minutes']
@@ -335,7 +335,6 @@ class CharacterBot:
                     finish_message_template=self.messages.MSG_TIMER_FINISH,
                     timers_dict=self.active_timers
                 ))
-            
             # コンテンツの構築
             current_parts = []
             syslog = ""
@@ -387,7 +386,6 @@ class CharacterBot:
                 "role": "user",
                 "parts": current_parts
             }]
-            
             # 記憶の取得
             memories = db_handler.get_memories(self.db_path, channel_id)
             
@@ -417,7 +415,6 @@ class CharacterBot:
                     thinking_level=thinking_level
                 )
             )
-            
             # Gemini API呼び出し
             response = await gemini_handler.generate_content_with_fallback(
                 client=gemini_client,
@@ -430,7 +427,6 @@ class CharacterBot:
             bot_response_text = await self._extract_response_text(
                 response, input_contents, full_system_instruction, tools
             )
-            
             # 履歴の保存
             if file_parts:
                 file_summary = await file_handler.summarize_attachments(prompt, file_parts)
@@ -446,7 +442,6 @@ class CharacterBot:
             # 相方Botへのメンション検出とログ出力
             if self._contains_partner_mention(bot_response_text):
                 print(f"[{self.display_name}] Partner mention detected in response")
-            print(history)
             dest = target_channel if target_channel else message.channel
 
             if interaction and not target_channel:
