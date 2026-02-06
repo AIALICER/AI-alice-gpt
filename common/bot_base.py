@@ -27,7 +27,7 @@ from . import file_handler
 from . import timer_handler
 from . import message_sender
 from . import url_handler
-
+from . import record_url
 
 class CharacterBot:
     """
@@ -135,6 +135,40 @@ class CharacterBot:
         @self.client.event
         async def on_message(message):
             await self._handle_message(message)
+        # スラッシュコマンド：記憶検索モードの開始
+        # CharacterBotクラス内にて
+        
+        @self.client.tree.command(name="search_history", description="過去の解析記録を検索し、専用スレッドを作成します")
+        @app_commands.describe(
+          query="検索したいキーワードやURLの一部",
+          limit="最新から何件の履歴を対象にするか（例：10）"
+         )
+        async def search_history(interaction: discord.Interaction, query: str, limit: int = 5):
+          # 1. 応答を保留（検索とスレッド作成に時間がかかるため）
+          await interaction.response.defer(ephemeral=True)
+          try:
+            # 2. record_url.py で定義した関数を呼び出す
+            # 引数を明示的に渡すことで、関数側での self 混乱を防ぎます
+            from . import record_url  # インポート場所は環境に合わせて調整
+            
+            await record_url.create_memory_thread(
+                interaction=interaction,
+                query=query,
+                limit=limit,
+                db_path=self.db_path,
+                display_name=self.display_name,
+                messages=self.messages
+            )
+            
+          except Exception as e:
+            print(f"[{self.display_name}] Search Command Error: {e}")
+            await interaction.followup.send(self.messages.ERR_REBOOT.format(error_detail=e), ephemeral=True)
+        @self.client.tree.context_menu(name=self.messages.CHAT_URL)
+        async def record_chat_url(interaction: discord.Interaction, message: discord.Message):
+            print(type(message))
+            print(type(interaction))
+            await interaction.response.send_message("メッセージを記録します！", ephemeral=True)
+            await record_url.add_memory_with_context(message,interaction,self.db_path,self.display_name)
         @self.client.tree.context_menu(name=self.messages.SUMMARY_COMAND)
         async def analyze_with_key(interaction: discord.Interaction, message: discord.Message):
             # 1. 応答を返す（ephemeral=True で自分だけに）
