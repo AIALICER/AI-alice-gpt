@@ -194,7 +194,7 @@ async def create_memory_thread(
         await thread.send(content=f"{interaction.user.mention}"+messages.MEMORY_CHAT, embed=embed)
     else:
         await thread.send(
-            messages.MEMORY_NOFIND.fomat(limit=limit,query=query)+messages.MEMORY_ER
+            messages.MEMORY_NOFIND.format(limit=limit,query=query)+messages.MEMORY_ER
         )
 
     await interaction.followup.send(f"スレッドを作成しました: {thread.mention}", ephemeral=True)
