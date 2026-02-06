@@ -120,7 +120,16 @@ def init_database(db_path: str) -> None:
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     ''')
-    
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS url_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, -- 自動で増える通し番号
+        channel_id INTEGER,                   -- チャンネルID
+        user_id INTEGER,                      -- ユーザーID
+        summary TEXT,                         -- メッセージの要約（Geminiが作成）
+        message_link TEXT,                    -- Discordのメッセージリンク
+        timestamp DATETIME DEFAULT (datetime('now', 'localtime')) -- 実行時の時刻
+    )
+    ''')
     conn.commit()
     conn.close()
 
