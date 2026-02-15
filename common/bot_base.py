@@ -208,7 +208,7 @@ class CharacterBot:
             await self._handle_message(message, force_process=True,interaction=True, target_channel=thread)
         
         # タイマースラッシュコマンド: /timer と /timers (アリスのみ)
-        if self.character_name == "AL_1S":
+        if self.character_name == "alice":
             @self.client.tree.command(name="timer", description="タイマーを設定します")
             @app_commands.describe(
                 minutes="分（0-180）",
