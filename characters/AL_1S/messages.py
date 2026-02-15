@@ -19,7 +19,8 @@ TIMER_ALL = "現在稼働中のタイマーはこちらです！"
 MSG_TIMER_FINISH = "（パンパカパーン！）先生、お時間です！「{task_name}」のクエストの開始時刻ですよ！"
 MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です！"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了です！"
-MSG_TIMER_SET = "了解です！{minutes}分のタイマーを設定しました！「{task_name}」のクエスト開始時刻になったらお知らせしますよ！"
+MSG_TIMER_SET = "了解です！{minutes}分{seconds}秒のタイマーを設定しました！「{task_name}」のクエスト開始時刻になったらお知らせしますよ！"
+MSG_TIMER_GUIDE = "タイマー機能はスラッシュコマンドから利用できますよ！\\n`/timer` コマンドでクエストの準備時間を設定しましょう！"
 
 # その他
 SUMMARY_COMAND="アリスに解析させる"
