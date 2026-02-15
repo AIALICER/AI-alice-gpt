@@ -207,73 +207,122 @@ class CharacterBot:
             # 5. 解析実行（ここだけはクラスのメソッドを呼ぶので self. が必要！）
             await self._handle_message(message, force_process=True,interaction=True, target_channel=thread)
         
-        # タイマースラッシュコマンド: /timer
-        @self.client.tree.command(name="timer", description="タイマーを設定します")
-        @app_commands.describe(
-            minutes="分（0-180）",
-            seconds="秒（0-59）",
-            task="タイマーの内容（例：カップ麺、会議）"
-        )
-        async def timer_set(
-            interaction: discord.Interaction,
-            minutes: app_commands.Range[int, 0, 180],
-            seconds: app_commands.Range[int, 0, 59] = 0,
-            task: str = "タイマー"
-        ):
-            total_seconds = minutes * 60 + seconds
-            if total_seconds <= 0:
-                await interaction.response.send_message("時間を1秒以上設定してください。", ephemeral=True)
-                return
+        # タイマースラッシュコマンド: /timer と /timers (アリスのみ)
+        if self.character_name == "AL_1S":
+            @self.client.tree.command(name="timer", description="タイマーを設定します")
+            @app_commands.describe(
+                minutes="分（0-180）",
+                seconds="秒（0-59）",
+                task="タイマーの内容（例：カップ麺、会議）"
+            )
+            async def timer_set(
+                interaction: discord.Interaction,
+                minutes: app_commands.Range[int, 0, 180],
+                seconds: app_commands.Range[int, 0, 59] = 0,
+                task: str = "タイマー"
+            ):
+                total_seconds = minutes * 60 + seconds
+                if total_seconds <= 0:
+                    await interaction.response.send_message("時間を1秒以上設定してください。", ephemeral=True)
+                    return
+                
+                # タイマーを設定
+                channel_id = interaction.channel_id
+                timer_data = {
+                    "task": task,
+                    "end_time": time.time() + total_seconds,
+                    "user": interaction.user.name
+                }
+                
+                if channel_id not in self.active_timers:
+                    self.active_timers[channel_id] = []
+                self.active_timers[channel_id].append(timer_data)
+                
+                # 時間表示の構築（秒が0の場合は省略）
+                time_str = f"{minutes}分" if seconds == 0 else f"{minutes}分{seconds}秒"
+                
+                # 初期メッセージを送信（後で編集するため）
+                initial_message = f"⏰ **{task}** のタイマー\n残り時間: {time_str}"
+                await interaction.response.send_message(initial_message)
+                
+                # 送信したメッセージを取得
+                sent_message = await interaction.original_response()
+                
+                # バックグラウンドでタイマー実行（カウントダウン付き）
+                asyncio.create_task(self._run_timer_with_countdown(
+                    interaction.channel, sent_message, total_seconds, task, timer_data
+                ))
             
-            # タイマーを設定
-            channel_id = interaction.channel_id
-            timer_data = {
-                "task": task,
-                "end_time": time.time() + total_seconds,
-                "user": interaction.user.name
-            }
-            
-            if channel_id not in self.active_timers:
-                self.active_timers[channel_id] = []
-            self.active_timers[channel_id].append(timer_data)
-            
-            # 即座に応答
-            await interaction.response.send_message(
-                self.messages.MSG_TIMER_SET.format(
-                    minutes=minutes,
-                    seconds=f"{seconds}秒" if seconds > 0 else "",
-                    task_name=task
+            # タイマー一覧スラッシュコマンド: /timers
+            @self.client.tree.command(name="timers", description="現在のタイマー一覧を表示します")
+            async def timer_list(interaction: discord.Interaction):
+                channel_id = interaction.channel_id
+                status_message = timer_handler.get_remaining_timers(
+                    channel_id,
+                    no_timer_message=self.messages.TIMER_NOT,
+                    timer_list_header=self.messages.TIMER_ALL,
+                    remaining_template=self.messages.MSG_TIMER_REMAINING,
+                    soon_template=self.messages.MSG_TIMER_SOON,
+                    timers_dict=self.active_timers
                 )
-            )
-            
-            # バックグラウンドでタイマー実行
-            asyncio.create_task(self._run_timer(interaction.channel, total_seconds, task, timer_data))
-        
-        # タイマー一覧スラッシュコマンド: /timers
-        @self.client.tree.command(name="timers", description="現在のタイマー一覧を表示します")
-        async def timer_list(interaction: discord.Interaction):
-            channel_id = interaction.channel_id
-            status_message = timer_handler.get_remaining_timers(
-                channel_id,
-                no_timer_message=self.messages.TIMER_NOT,
-                timer_list_header=self.messages.TIMER_ALL,
-                remaining_template=self.messages.MSG_TIMER_REMAINING,
-                soon_template=self.messages.MSG_TIMER_SOON,
-                timers_dict=self.active_timers
-            )
-            await interaction.response.send_message(status_message)
+                await interaction.response.send_message(status_message)
     
-    async def _run_timer(self, channel, total_seconds: int, task: str, timer_data: dict):
-        """バックグラウンドでタイマーを実行"""
+    async def _run_timer_with_countdown(self, channel, message, total_seconds: int, task: str, timer_data: dict):
+        """バックグラウンドでタイマーを実行（カウントダウン表示付き）"""
+        end_time = time.time() + total_seconds
+        
         try:
-            await asyncio.sleep(total_seconds)
-            # タイマー終了メッセージ
+            # カウントダウン更新間隔（秒）
+            # 残り時間に応じて更新頻度を調整
+            while True:
+                remaining = end_time - time.time()
+                
+                if remaining <= 0:
+                    break
+                
+                # 残り時間に応じて更新間隔を調整
+                if remaining > 60:
+                    update_interval = 10  # 1分以上: 10秒ごと
+                elif remaining > 10:
+                    update_interval = 5   # 10秒〜1分: 5秒ごと
+                else:
+                    update_interval = 1   # 10秒以下: 1秒ごと
+                
+                # 残り時間を計算
+                mins = int(remaining // 60)
+                secs = int(remaining % 60)
+                
+                if mins > 0:
+                    time_display = f"{mins}分{secs}秒"
+                else:
+                    time_display = f"{secs}秒"
+                
+                # メッセージを編集して残り時間を更新
+                try:
+                    progress_bar = self._create_progress_bar(total_seconds, remaining)
+                    await message.edit(content=f"⏰ **{task}** のタイマー\n{progress_bar} 残り: {time_display}")
+                except Exception as e:
+                    print(f"[{self.display_name}] Timer message edit error: {e}")
+                
+                # 次の更新まで待機
+                await asyncio.sleep(min(update_interval, remaining))
+            
+            # タイマー終了
+            await message.edit(content=f"✅ **{task}** のタイマーが終了しました！")
             await channel.send(self.messages.MSG_TIMER_FINISH.format(task_name=task))
+            
         finally:
             # タイマー一覧から削除
             channel_id = channel.id
             if channel_id in self.active_timers:
                 self.active_timers[channel_id] = [t for t in self.active_timers[channel_id] if t != timer_data]
+    
+    def _create_progress_bar(self, total_seconds: int, remaining_seconds: float) -> str:
+        """プログレスバーを作成"""
+        progress = 1 - (remaining_seconds / total_seconds)
+        filled = int(progress * 10)
+        empty = 10 - filled
+        return "█" * filled + "░" * empty
     
     async def _handle_message(self, message: discord.Message, force_process: bool = False,
                               interaction: discord.Interaction = None,target_channel: discord.Thread = None ) -> None:

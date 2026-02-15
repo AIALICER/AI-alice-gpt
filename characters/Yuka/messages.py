@@ -19,7 +19,7 @@ TIMER_ALL = "現在稼働中のタイマーはこちらです！"
 MSG_TIMER_FINISH = "先生、お時間です！「{task_name}」計算通り。完璧～。"
 MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です！"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了です！ま、ここまでは計算通りね。"
-MSG_TIMER_SET = "了解！{minutes}分{seconds}秒のタイマーを設定しました！「{task_name}」、時間になったらお知らせしますね♪"
+MSG_TIMER_SET = "了解！{time_str}のタイマーを設定しました！「{task_name}」、時間になったらお知らせしますね♪"
 MSG_TIMER_GUIDE = "タイマー機能はスラッシュコマンドから利用できます！\\n`/timer` コマンドで簡単に設定できますよ♪"
 
 # その他
