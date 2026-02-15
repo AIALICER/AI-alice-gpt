@@ -118,6 +118,68 @@ class CharacterBot:
             return False
         return f'<@{partner_id}>' in text or f'<@!{partner_id}>' in text
     
+    def _extract_timer_request(self, content: str) -> Optional[tuple[float, str]]:
+        """
+        タイマーリクエストを検出し、(分数, タスク名)を返す
+        タイマーでない場合はNoneを返す
+        """
+        content = content.lower()
+        
+        # パターン1: 「X分タイマー」「タイマーX分」
+        patterns = [
+            # 「3分タイマー」「5分のタイマー」
+            r'(\d+(?:\.\d+)?)\s*分(?:の)?(?:タイマー|計測|計って)',
+            # 「タイマー3分」「タイマー 5分」
+            r'(?:タイマー|計測|計って)\s*(\d+(?:\.\d+)?)\s*分',
+            # 「3分後にお知らせ」「5分後に教えて」
+            r'(\d+(?:\.\d+)?)\s*分後(?:に)?(?:お知らせ|教えて|知らせて)',
+            # 「3分たったら」「5分経ったら」
+            r'(\d+(?:\.\d+)?)\s*分(?:たったら|経ったら|たてば|経てば)',
+            # 「X分で通知」「X分で知らせて」
+            r'(\d+(?:\.\d+)?)\s*分(?:で)?(?:通知|知らせて|お知らせ)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match:
+                try:
+                    minutes = float(match.group(1))
+                    if minutes <= 0 or minutes > 180:  # 0以下または3時間以上は無視
+                        continue
+                    
+                    # タスク名を抽出（タイマー設定後のテキストを使用）
+                    task_name = self._extract_task_name(content)
+                    return (minutes, task_name)
+                except ValueError:
+                    continue
+        
+        return None
+    
+    def _extract_task_name(self, content: str) -> str:
+        """
+        メッセージからタスク名を抽出する
+        """
+        # 「〜のタイマー」「〜を計測」などからタスク名を抽出
+        task_patterns = [
+            # 「カップ麺のタイマー」「会議のタイマー」
+            r'([^\s]{1,10})(?:の|を)(?:タイマー|計測|計って)',
+            # 「タイマー カップ麺」「タイマー 会議」
+            r'(?:タイマー|計測)\s*[:：]?\s*([^\s]{1,10})',
+            # 「〜を3分計測」
+            r'([^\s]{1,10})(?:を|は)\s*\d+\s*分',
+        ]
+        
+        for pattern in task_patterns:
+            match = re.search(pattern, content)
+            if match:
+                task = match.group(1).strip()
+                # 不要な接頭辞/接尾辞を除去
+                task = re.sub(r'^(の|を|は)', '', task)
+                if task and len(task) <= 10:
+                    return task
+        
+        return "タイマー"
+    
     def _setup_events(self) -> None:
         """Discordイベントハンドラを設定"""
         
@@ -235,6 +297,26 @@ class CharacterBot:
                 await message.channel.send(self.messages.DB_DEL_SUC)
             else:
                 await message.channel.send(self.messages.DB_DEL_FIL)
+            return
+        
+        # タイマー事前判定（Gemini APIを使わない高速パス）
+        timer_info = self._extract_timer_request(message.content)
+        if timer_info:
+            minutes, task_name = timer_info
+            # タイマーを設定
+            asyncio.create_task(timer_handler.set_timer(
+                message.channel,
+                minutes,
+                task_name,
+                finish_message_template=self.messages.MSG_TIMER_FINISH,
+                timers_dict=self.active_timers
+            ))
+            # 即座に定型文で応答
+            response_msg = self.messages.MSG_TIMER_SET.format(
+                minutes=int(minutes),
+                task_name=task_name
+            )
+            await message.channel.send(response_msg)
             return
         
         # 特殊コマンドの処理
