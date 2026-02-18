@@ -130,6 +130,14 @@ def init_database(db_path: str) -> None:
         timestamp DATETIME DEFAULT (datetime('now', 'localtime')) -- 実行時の時刻
     )
     ''')
+    cursor.execute('''
+            CREATE TABLE IF NOT EXISTS wiki_news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                url TEXT UNIQUE,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+    ''')
     conn.commit()
     conn.close()
 

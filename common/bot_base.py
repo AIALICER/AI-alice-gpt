@@ -12,7 +12,12 @@ import asyncio
 from typing import Dict, Any, Optional, List, Callable, Set
 from google.genai import types
 import time
+import discord
+from discord.ext import tasks  # @tasks.loop を使うために必要
+from datetime import datetime, time, timezone, timedelta  # datetime, time, JSTの設定に必要
 
+# 日本標準時 (JST) の定義
+JST = timezone(timedelta(hours=9))
 from .config_base import (
     gemini_client,
     get_db_path,
@@ -28,7 +33,7 @@ from . import timer_handler
 from . import message_sender
 from . import url_handler
 from . import record_url
-
+from . import news_handler
 class CharacterBot:
     """
     キャラクター別Discord Botの基盤クラス
@@ -88,7 +93,17 @@ class CharacterBot:
         
         # イベントハンドラの設定
         self._setup_events()
-    
+    @tasks.loop(time=time(hour=9, minute=0, tzinfo=JST))
+    async def scheduled_wiki_check(self):
+        if datetime.now(JST).weekday() == 1:  # 火曜日
+            # ギルドを取得（IDは先生のものに書き換えてください）
+            guild = self.client.get_guild(751791380837171340)
+            if guild:
+                from news_handler import check_wiki_logic
+                res = check_wiki_logic(self.db_path)
+                # report_channelを取得して報告
+                channel = await self.get_or_create_report_channel(guild, "wiki-更新通知")
+                await self.report_wiki_news(channel, res)
     def _load_system_instruction(self) -> str:
         """システムインストラクションファイルを読み込む"""
         try:
@@ -139,9 +154,11 @@ class CharacterBot:
         @self.client.event
         async def on_ready():
             print(f"[{self.display_name}] Logged in as {self.client.user}")
+            if not self.scheduled_wiki_check.is_running():
+                self.scheduled_wiki_check.start()
             # テストするサーバーのID（数字）をここに入れる
             target_guild = discord.Object(id=751791380837171340) 
-    
+       
             # このサーバーにコマンドをコピーして同期
             self.client.tree.copy_global_to(guild=target_guild)
             await self.client.tree.sync(guild=target_guild)
@@ -152,7 +169,12 @@ class CharacterBot:
             await self._handle_message(message)
         # スラッシュコマンド：記憶検索モードの開始
         # CharacterBotクラス内にて
-        
+        @self.client.tree.command(name="wiki_check", description="Wikiの最新イベントを確認します")
+        async def wiki_check(interaction: discord.Interaction): # ここにselfはいらない（関数として定義）
+         await interaction.response.defer()
+        # 外部ファイルのロジックを呼び出す
+         res = news_handler.check_wiki_logic(self.db_path) 
+         await self.report_wiki_news(interaction.followup, res, is_manual=True)
         @self.client.tree.command(name="search_history", description="過去の解析記録を検索し、専用スレッドを作成します")
         @app_commands.describe(
           query="検索したいキーワードやURLの一部",
@@ -677,7 +699,65 @@ class CharacterBot:
             bot_response_text = self.messages.ALICE_FILED
         
         return bot_response_text
+    async def get_or_create_report_channel(guild, channel_name="wiki-更新通知"):
+
+    # 1. サーバー内のテキストチャンネルから、名前が一致するものを探す
+     channel = discord.utils.get(guild.text_channels, name=channel_name)
     
+    # 2. 見つからなかった場合、新しく作成する
+     if channel is None:
+        try:
+            # 権限の設定（@everyoneは書き込み不可、Botは書き込み可能）
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+            
+            channel = await guild.create_text_channel(
+                name=channel_name,
+                topic="ブルーアーカイブWikiの更新を自動でお知らせします（自動生成）",
+                overwrites=overwrites
+            )
+            print(f"新しくチャンネルを作成しました: {channel_name}")
+            
+        except discord.Forbidden:
+            print("エラー: チャンネルを作成する権限がありません。")
+            return None
+        except Exception as e:
+            print(f"チャンネル作成中にエラーが発生しました: {e}")
+            return None
+    
+     return channel
+    async def report_wiki_news(self, target, result, is_manual=False):
+        """
+        Wikiの解析結果をDiscordに送信する共通処理
+        target: 送信先 (interaction.followup または discord.TextChannel)
+        result: wiki_logic.check_wiki_logic の戻り値
+        is_manual: 手動実行（スラッシュコマンド）かどうか
+        """
+        if not result:
+            if is_manual:
+                await target.send(self.messages.WIKI_FIELD)
+            return
+
+        title = result["title"]
+        link = result["url"]
+        is_new = result["is_new"]
+
+        # 新着の場合、または手動で確認された場合
+        if is_new:
+            msg= self.messages.WIKI_NEW_EVENT.format(
+                title=result["title"], 
+                link=result["url"]
+            )
+            await target.send(msg)
+        elif is_manual:
+            # 既読だけど手動で聞かれた場合
+            msg = self.messages.WIKI_ALREADY_READ.format(
+                title=result["title"], 
+                link=result["url"]
+            )
+            await target.send(msg)
     def run(self) -> None:
         """Botを起動"""
         token = os.getenv(self.discord_token_env)
