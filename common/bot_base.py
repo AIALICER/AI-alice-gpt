@@ -14,7 +14,8 @@ from google.genai import types
 import time
 import discord
 from discord.ext import tasks  # @tasks.loop を使うために必要
-from datetime import datetime, time, timezone, timedelta  # datetime, time, JSTの設定に必要
+from datetime import datetime, timezone, timedelta  # datetime, timezone, timedeltaはそのまま使用
+from datetime import time as dt_time  # timeクラスは別名でインポートして標準timeモジュールと区別
 
 # 日本標準時 (JST) の定義
 JST = timezone(timedelta(hours=9))
@@ -93,7 +94,7 @@ class CharacterBot:
         
         # イベントハンドラの設定
         self._setup_events()
-    @tasks.loop(time=time(hour=9, minute=0, tzinfo=JST))
+    @tasks.loop(time=dt_time(hour=9, minute=0, tzinfo=JST))
     async def scheduled_wiki_check(self):
         if datetime.now(JST).weekday() == 1:  # 火曜日
             # ギルドを取得（IDは先生のものに書き換えてください）
