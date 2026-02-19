@@ -41,8 +41,14 @@ jobs:
             git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           fi
           
-          # 分岐したブランチをマージ方式で統合
-          git pull --no-rebase origin main
+          # Fetch latest main branch
+          git fetch origin main
+          
+          # Checkout main branch (create if not exists)
+          git checkout main || git checkout -b main origin/main
+          
+          # Reset to origin/main to ensure clean state
+          git reset --hard origin/main
           
           # Restore original URL (clean up)
           if [[ "$current_url" == https://* ]]; then
