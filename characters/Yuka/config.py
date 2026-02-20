@@ -3,6 +3,7 @@
 """
 
 import re
+from characters.bot_id_list import get_partner_info
 
 # キャラクター名
 CHARACTER_NAME = "Yuka"  # DB名に使用
@@ -22,6 +23,7 @@ SPECIAL_COMMANDS = {
 # システムインストラクションパス
 SYSTEM_INSTRUCTION_PATH = "characters/Yuka/system_instruction.txt"
 
-# 相方Bot情報（相互会話用）
-# PARTNER_BOT_ID = 1465400600878645352  # AIケイのBot ID  //まだケイのIDなので後で改修
-PARTNER_BOT_NAME = "AIユウカ"
+# 相方Bot情報（bot_registry.py で一元管理）
+_partner = get_partner_info(CHARACTER_NAME)
+PARTNER_BOT_ID = _partner["bot_id"]
+PARTNER_BOT_NAME = _partner["display_name"]
