@@ -411,6 +411,14 @@ class CharacterBot:
         command_match = self.command_pattern.match(message.content)
         
         if self.client.user.mentioned_in(message) or command_match or force_process:
+            # ユーザー情報をDBに自動登録（upsert）
+            db_handler.upsert_user(
+                self.db_path,
+                message.author.id,
+                message.author.display_name,
+                message.author.name
+            )
+
             # プロンプトの抽出
             if self.client.user.mentioned_in(message):
              prompt = message.content.replace(f'<@{self.client.user.id}>', '').replace(f'<@!{self.client.user.id}>', '').strip()
@@ -574,7 +582,20 @@ class CharacterBot:
             current_jst = timer_handler.get_japan_time()
             
             # システムインストラクションの構築
-            enhanced_instruction = f"{self.system_instruction}\n\n[Current Japan Time]\n{current_jst}"
+            # メンションしたユーザー情報を取得
+            author = message.author
+            user_display_name = author.display_name  # サーバー上の表示名（ニックネーム等）
+            user_account_name = author.name           # Discordアカウント名
+            user_mention = f'<@{author.id}>'         # Discordメンション形式
+            user_info = (
+                f"\n\n[Current User]\n"
+                f"Display Name: {user_display_name}\n"
+                f"Account Name: {user_account_name}\n"
+                f"Mention: {user_mention}\n"
+                f"# ユーザーをメンションする場合は上記の Mention 文字列をそのまま使用すること"
+            )
+
+            enhanced_instruction = f"{self.system_instruction}{user_info}\n\n[Current Japan Time]\n{current_jst}"
             if tools:
                 full_system_instruction = (
                     enhanced_instruction + 

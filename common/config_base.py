@@ -138,6 +138,15 @@ def init_database(db_path: str) -> None:
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
     ''')
+    # ユーザー情報テーブル（メンション時に自動登録）
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        display_name TEXT,
+        account_name TEXT,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
     conn.commit()
     conn.close()
 

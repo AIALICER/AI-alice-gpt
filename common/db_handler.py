@@ -227,3 +227,61 @@ async def summarize_and_cleanup(db_path: str, channel_id: int) -> None:
         db.rollback()
     finally:
         db.close()
+
+
+def upsert_user(db_path: str, user_id: int, display_name: str, account_name: str) -> None:
+    """
+    ユーザー情報を登録または更新（upsert）する
+
+    ボットがメンションされた際に呼び出し、ユーザーIDをキーとして
+    表示名・アカウント名・最終アクセス日時を最新状態に保つ。
+
+    Args:
+        db_path: データベースファイルのパス
+        user_id: Discord ユーザーID（整数）
+        display_name: サーバー上の表示名（ニックネーム等）
+        account_name: Discord アカウント名
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+    INSERT INTO users (user_id, display_name, account_name, last_seen)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id)
+    DO UPDATE SET
+        display_name = excluded.display_name,
+        account_name = excluded.account_name,
+        last_seen    = excluded.last_seen
+    ''', (user_id, display_name, account_name))
+    conn.commit()
+    conn.close()
+
+
+def get_user_mention(db_path: str, display_name: str) -> str | None:
+    """
+    表示名（display_name）からDiscordメンション文字列を返す
+
+    一致するユーザーが見つかった場合は '<@ユーザーID>' 形式の文字列を返す。
+    見つからない場合は None を返す。
+
+    Args:
+        db_path: データベースファイルのパス
+        display_name: 検索する表示名（部分一致）
+
+    Returns:
+        str | None: '<@ユーザーID>' 形式、または None
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT user_id FROM users
+    WHERE display_name LIKE ?
+    ORDER BY last_seen DESC
+    LIMIT 1
+    ''', (f'%{display_name}%',))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return f'<@{row["user_id"]}>'
+    return None
