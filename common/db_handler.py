@@ -285,3 +285,41 @@ def get_user_mention(db_path: str, display_name: str) -> str | None:
     if row:
         return f'<@{row["user_id"]}>'
     return None
+
+
+def get_all_users_info(db_path: str) -> str:
+    """
+    登録済み全ユーザーの情報をシステムインストラクション用テキストで返す
+
+    Gemini に「誰をどうメンションするか」を伝えるために使用する。
+    ユーザーが一人も登録されていない場合は空文字列を返す。
+
+    Args:
+        db_path: データベースファイルのパス
+
+    Returns:
+        str: '[Known Users]\\nDisplay Name: 〇〇 | Mention: <@ID>\\n...' 形式のテキスト
+             登録ユーザーがいない場合は空文字列
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT user_id, display_name, account_name
+    FROM users
+    ORDER BY last_seen DESC
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return ""
+
+    lines = ["[Known Users]", "# 以下のユーザーをメンションする際は Mention 列の文字列をそのまま使用すること"]
+    for row in rows:
+        lines.append(
+            f"Display Name: {row['display_name']} | "
+            f"Account Name: {row['account_name']} | "
+            f"Mention: <@{row['user_id']}>"
+        )
+    return "\n".join(lines)

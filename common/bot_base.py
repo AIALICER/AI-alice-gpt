@@ -595,7 +595,12 @@ class CharacterBot:
                 f"# ユーザーをメンションする場合は上記の Mention 文字列をそのまま使用すること"
             )
 
-            enhanced_instruction = f"{self.system_instruction}{user_info}\n\n[Current Japan Time]\n{current_jst}"
+            # 登録済み全ユーザー一覧を取得（他ユーザーへのメンション用）
+            known_users_info = db_handler.get_all_users_info(self.db_path)
+            known_users_section = f"\n\n{known_users_info}" if known_users_info else ""
+
+            enhanced_instruction = f"{self.system_instruction}{user_info}{known_users_section}\n\n[Current Japan Time]\n{current_jst}"
+
             if tools:
                 full_system_instruction = (
                     enhanced_instruction + 
