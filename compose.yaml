@@ -3,7 +3,7 @@ services:
   alice:
     build: .
     container_name: ai-alice
-    command: python characters/AL_1S/AL-1S.py
+    command: python characters/AL_1S/alice.py
     restart: unless-stopped
     env_file:
       - .env

@@ -1,12 +1,15 @@
+import re
 import sqlite3
 import asyncio
+import discord
+from typing import Any
+
+from google.genai import types
 from .config_base import gemini_client
 from . import url_handler
 from . import file_handler
-import discord
 from . import gemini_handler
-from google.genai import types
-from typing import Any
+
 
 
 async def add_memory_with_context(
@@ -82,7 +85,6 @@ async def add_memory_with_context(
 
     # 6. データベース(url_memories)への保存
     try:
-        import sqlite3
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -97,7 +99,6 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
     """
     指定された件数(limit)の履歴をDBから取得し、Geminiにその中で最適な1件を選ばせる
     """
-    import sqlite3
     
     # 1. 指定された件数(limit)分、最新の履歴を取得
     memories = []
@@ -124,7 +125,6 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
         memory_list_text += f"ID: {m['id']} | 要約: {m['summary']} | 日時: {m['timestamp']}\n"
 
     # 3. Geminiに「指定リストの中から最適解」を選ばせる
-    from google.genai import types
     config = types.GenerateContentConfig(
         system_instruction="あなたは記憶検索の専門家です。関連するIDを1つだけ抽出してください。",
         max_output_tokens=20, # IDを答えるだけなので短くてOK
@@ -151,7 +151,6 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
             return None
         
         # 数値のみを抽出（念のため）
-        import re
         match = re.search(r'\d+', best_id_text)
         if not match: return None
         

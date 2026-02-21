@@ -207,7 +207,7 @@ class CharacterBot:
             print(type(interaction))
             await interaction.response.send_message("メッセージを記録します！", ephemeral=True)
             await record_url.add_memory_with_context(message,interaction,self.db_path,self.display_name)
-        @self.client.tree.context_menu(name=self.messages.SUMMARY_COMAND)
+        @self.client.tree.context_menu(name=self.messages.SUMMARY_COMMAND)
         async def analyze_with_key(interaction: discord.Interaction, message: discord.Message):
             # 1. 応答を返す（ephemeral=True で自分だけに）
             await interaction.response.send_message("解析専用のプライベートスレッドを作成中...", ephemeral=True)
@@ -282,8 +282,8 @@ class CharacterBot:
                 channel_id = interaction.channel_id
                 status_message = timer_handler.get_remaining_timers(
                     channel_id,
-                    no_timer_message=self.messages.TIMER_NOT,
-                    timer_list_header=self.messages.TIMER_ALL,
+                    no_timer_message=self.messages.MSG_NO_ACTIVE_TIMERS,
+                    timer_list_header=self.messages.MSG_ACTIVE_TIMERS_HEADER,
                     remaining_template=self.messages.MSG_TIMER_REMAINING,
                     soon_template=self.messages.MSG_TIMER_SOON,
                     timers_dict=self.active_timers
@@ -388,9 +388,9 @@ class CharacterBot:
         # 履歴消去コマンド
         if message.content == self.history_clear_command:
             if db_handler.clear_db_history(self.db_path, channel_id):
-                await message.channel.send(self.messages.DB_DEL_SUC)
+                await message.channel.send(self.messages.MSG_HISTORY_CLEARED)
             else:
-                await message.channel.send(self.messages.DB_DEL_FIL)
+                await message.channel.send(self.messages.MSG_HISTORY_CLEAR_FAILED)
             return
         
         # タイマー関連メッセージの案内
@@ -495,7 +495,7 @@ class CharacterBot:
         )
         thinking_level = judgment['level']
         needs_search = judgment['search']
-        timer_second = judgment['minutes']
+        timer_minutes = judgment['minutes']
         timer_name = judgment['task']
         needs_history=judgment['reference']
 
@@ -506,20 +506,20 @@ class CharacterBot:
             # 推論レベルが高い場合、思考中メッセージを送信
             if thinking_level == 'high':
                 if not interaction:
-                    await message.channel.send(self.messages.ALI_THI)
+                    await message.channel.send(self.messages.MSG_THINKING)
             
             # 検索が必要な場合
             tools = []
             if needs_search:
                 if not interaction:
-                    await message.channel.send(self.messages.ALI_SUR)
+                    await message.channel.send(self.messages.MSG_SEARCHING)
                 tools.append(types.Tool(google_search=types.GoogleSearch()))
             # タイマーの設定
-            if timer_second != 0:
+            if timer_minutes != 0:
                 t_name = str(timer_name) if timer_name else "Timer"
                 asyncio.create_task(timer_handler.set_timer(
                     message.channel,
-                    timer_second,
+                    timer_minutes,
                     t_name,
                     finish_message_template=self.messages.MSG_TIMER_FINISH,
                     timers_dict=self.active_timers
@@ -527,8 +527,8 @@ class CharacterBot:
             # コンテンツの構築
             current_parts = []
             syslog = ""
-            if timer_second != 0:
-                syslog = f"\n\n[System info: Timer accepted for {timer_second} minutes. Please only report 'Acknowledged' and do not respond as if time has passed. Also, do not reference past conversation for this message.]"
+            if timer_minutes != 0:
+                syslog = f"\n\n[System info: Timer accepted for {timer_minutes} minutes. Please only report 'Acknowledged' and do not respond as if time has passed. Also, do not reference past conversation for this message.]"
             
             if prompt:
                 current_parts.append({"text": prompt + syslog})
@@ -659,7 +659,7 @@ class CharacterBot:
              await message_sender.send_long_message(
                dest, # ここを message.channel から dest に変更
                bot_response_text,
-               long_message_notice=self.messages.ALI_LONG_MES
+               long_message_notice=self.messages.MSG_RESPONSE_TOO_LONG
              )
             
             
@@ -719,11 +719,11 @@ class CharacterBot:
             
             if not bot_response_text:
                 print(f"[{self.display_name}] Extract failed")
-                bot_response_text = self.messages.ALICE_FILED
+                bot_response_text = self.messages.RESPONSE_FAILED
                 
         except Exception as extract_error:
             print(f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}")
-            bot_response_text = self.messages.ALICE_FILED
+            bot_response_text = self.messages.RESPONSE_FAILED
         
         return bot_response_text
     async def get_or_create_report_channel(guild, channel_name="wiki-更新通知"):
@@ -764,7 +764,7 @@ class CharacterBot:
         """
         if not result:
             if is_manual:
-                await target.send(self.messages.WIKI_FIELD)
+                await target.send(self.messages.WIKI_FAILED)
             return
 
         title = result["title"]

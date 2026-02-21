@@ -6,7 +6,7 @@ import re
 from characters.bot_id_list import get_partner_info
 
 # キャラクター名
-CHARACTER_NAME = "Yuka"  # DB名に使用
+CHARACTER_NAME = "yuka"  # DB名に使用
 DISPLAY_NAME = "ユウカ"
 
 # コマンドパターン（全角/半角の!、全角/半角スペース、改行に対応）

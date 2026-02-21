@@ -23,7 +23,7 @@ BOT_REGISTRY: dict = {
         "bot_id": 1465400600878645352,
         "display_name": "AIケイ",
     },
-    "Yuka": {
+    "yuka": {
         "bot_id": 1468944602370277472,
         "display_name": "AIユウカ",
     },
