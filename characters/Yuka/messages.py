@@ -3,7 +3,7 @@
 """
 
 # 相方Bot情報（configからインポート）
-from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
+from .config import PARTNER_BOT_NAME
 
 # エラーメッセージ
 ALICE_FILED = "計算機が...故障していたとは..."
@@ -23,10 +23,18 @@ MSG_TIMER_SET = "了解！{time_str}のタイマーを設定しました！「{t
 MSG_TIMER_GUIDE = "タイマー機能はスラッシュコマンドから利用できます！\\n`/timer` コマンドで簡単に設定できますよ♪"
 
 # その他
-# SUMMARY_COMAND="アリスに解析させる"
+SUMMARY_COMAND="ユウカに解析させる"
 ALI_LONG_MES = "変数が……多すぎる……，ファイルの生成を行います！"
 DB_DEL_SUC = "了解！このチャンネルの記憶をリセットしますね！"
 DB_DEL_FIL = "ごめんなさい、履歴の消去に失敗しました…"
 MSG_SUMMARY="先生。対象のメッセージはこちらで解析します!"
 
 # 特殊コマンド
+
+# record_url関係
+MEMORY_TITLE="記録を特定しました"
+MEMORY_DEST="これが該当する記録です"
+MEMORY_CHAT="先生、お探しのものはこれですか?"
+MEMORY_NOFIND="{limit} 件の記録の中に「{query}」に合致する記憶は見つけられませんでした…"
+MEMORY_ER="より古い記録を検索しますか？"
+CHAT_URL="ユウカにメッセージを覚えさせる"
