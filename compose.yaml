@@ -39,6 +39,26 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ユウカ Discord Bot
+  yuka:
+    build: .
+    container_name: ai-yuka
+    command: python characters/Yuka/Yuka.py
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - shared-network
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   shared-network:
     external: true
