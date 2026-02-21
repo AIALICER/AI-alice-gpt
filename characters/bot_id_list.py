@@ -24,7 +24,7 @@ BOT_REGISTRY: dict = {
         "display_name": "AIケイ",
     },
     "Yuka": {
-        "bot_id": None,  # TODO: ユウカのBot IDを取得後に設定
+        "bot_id": 1468944602370277472,
         "display_name": "AIユウカ",
     },
 }
