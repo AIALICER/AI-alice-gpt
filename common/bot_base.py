@@ -289,6 +289,40 @@ class CharacterBot:
                     timers_dict=self.active_timers
                 )
                 await interaction.response.send_message(status_message)
+            
+            # ダイスロールスラッシュコマンド: /dice
+            @self.client.tree.command(name="dice", description="ダイスを振ります")
+            @app_commands.describe(notation="ダイスの指定（例: 2d6, 1d100）")
+            async def dice_roll(interaction: discord.Interaction, notation: str):
+                import random
+                notation = notation.lower().strip()
+                match = re.match(r'^(\d+)d(\d+)$', notation)
+                
+                if not match:
+                    await interaction.response.send_message(self.messages.MSG_DICE_INVALID, ephemeral=True)
+                    return
+                
+                num_dice = int(match.group(1))
+                num_sides = int(match.group(2))
+                
+                if num_dice < 1 or num_dice > 100 or num_sides < 2 or num_sides > 1000:
+                    await interaction.response.send_message(self.messages.MSG_DICE_RANGE_ERROR, ephemeral=True)
+                    return
+                
+                rolls = [random.randint(1, num_sides) for _ in range(num_dice)]
+                total = sum(rolls)
+                
+                if num_dice <= 10:
+                    rolls_str = ", ".join(map(str, rolls))
+                else:
+                    rolls_str = ", ".join(map(str, rolls[:5])) + f"... (他{num_dice - 5}個)"
+                
+                result_msg = self.messages.MSG_DICE_RESULT.format(
+                    notation=notation.upper(),
+                    rolls=rolls_str,
+                    total=total
+                )
+                await interaction.response.send_message(result_msg)
     
     async def _run_timer_with_countdown(self, channel, message, total_seconds: int, task: str, timer_data: dict):
         """バックグラウンドでタイマーを実行（カウントダウン表示付き）"""

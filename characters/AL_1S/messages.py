@@ -22,6 +22,11 @@ MSG_TIMER_SOON = "・{task_name}: まもなく終了です！"
 MSG_TIMER_SET = "了解です！{time_str}のタイマーを設定しました！「{task_name}」のクエスト開始時刻になったらお知らせしますよ！"
 MSG_TIMER_GUIDE = "タイマー機能はスラッシュコマンドから利用できますよ！\\n`/timer` コマンドでクエストの準備時間を設定しましょう！"
 
+# ダイスロール関連
+MSG_DICE_RESULT = "🎲 ダイスロール結果です！\n**{notation}** → {rolls}\n合計: **{total}**"
+MSG_DICE_INVALID = "指定が正しくありません...！`XdY` 形式で指定してください（例: `2d6`）"
+MSG_DICE_RANGE_ERROR = "ダイスの個数は1〜100、面数は2〜1000で指定してください！"
+
 # その他
 SUMMARY_COMMAND = "アリスに解析させる"
 MSG_RESPONSE_TOO_LONG = "応答が長すぎるため，ファイルの生成を行います！"
