@@ -177,22 +177,15 @@ class CharacterBot:
          res = news_handler.check_wiki_logic(self.db_path) 
          await self.report_wiki_news(interaction.followup, res, is_manual=True)
 
-        @self.client.tree.command(name="help", description="アリスのコマンド一覧を表示します")
-        async def help_command(interaction: discord.Interaction):
-            await interaction.response.send_message(self.messages.MSG_HELP)
-        
         @self.client.tree.command(name="search_history", description="過去の解析記録を検索し、専用スレッドを作成します")
         @app_commands.describe(
           query="検索したいキーワードやURLの一部",
           limit="最新から何件の履歴を対象にするか（例：10）"
          )
         async def search_history(interaction: discord.Interaction, query: str, limit: int = 5):
-          # 1. 応答を保留（検索とスレッド作成に時間がかかるため）
           await interaction.response.defer(ephemeral=True)
           try:
-            # 2. record_url.py で定義した関数を呼び出す
-            # 引数を明示的に渡すことで、関数側での self 混乱を防ぎます
-            from . import record_url  # インポート場所は環境に合わせて調整
+            from . import record_url
             
             await record_url.create_memory_thread(
                 interaction=interaction,
@@ -206,36 +199,29 @@ class CharacterBot:
           except Exception as e:
             print(f"[{self.display_name}] Search Command Error: {e}")
             await interaction.followup.send(self.messages.ERR_REBOOT.format(error_detail=e), ephemeral=True)
+        
         @self.client.tree.context_menu(name=self.messages.CHAT_URL)
         async def record_chat_url(interaction: discord.Interaction, message: discord.Message):
-            print(type(message))
-            print(type(interaction))
             await interaction.response.send_message("メッセージを記録します！", ephemeral=True)
-            await record_url.add_memory_with_context(message,interaction,self.db_path,self.display_name)
+            await record_url.add_memory_with_context(message, interaction, self.db_path, self.display_name)
+        
         @self.client.tree.context_menu(name=self.messages.SUMMARY_COMMAND)
         async def analyze_with_key(interaction: discord.Interaction, message: discord.Message):
-            # 1. 応答を返す（ephemeral=True で自分だけに）
             await interaction.response.send_message("解析専用のプライベートスレッドを作成中...", ephemeral=True)
             
-            # 2. プライベートスレッドの作成
-            # ここでは引数の message を使うので self. は不要！
             thread = await message.channel.create_thread(
                 name=f"解析：{message.author.display_name}の投稿",
                 type=discord.ChannelType.private_thread,
                 auto_archive_duration=60
             )
             
-            # 3. ユーザーをスレッドに追加
-            # ここでも引数の interaction を使うので self. は不要！
             await thread.add_user(interaction.user)
             
-            # 4. スレッド開始の合図
-            await thread.send(f"{interaction.user.mention} "+self.messages.MSG_SUMMARY)
+            await thread.send(f"{interaction.user.mention} " + self.messages.MSG_SUMMARY)
 
-            # 5. 解析実行（ここだけはクラスのメソッドを呼ぶので self. が必要！）
-            await self._handle_message(message, force_process=True,interaction=True, target_channel=thread)
+            await self._handle_message(message, force_process=True, interaction=True, target_channel=thread)
         
-        # タイマースラッシュコマンド: /timer と /timers (アリスのみ)
+        # アリス専用のコマンド
         if self.character_name == "alice":
             @self.client.tree.command(name="timer", description="タイマーを設定します")
             @app_commands.describe(
