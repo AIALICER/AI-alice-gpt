@@ -176,6 +176,11 @@ class CharacterBot:
         # 外部ファイルのロジックを呼び出す
          res = news_handler.check_wiki_logic(self.db_path) 
          await self.report_wiki_news(interaction.followup, res, is_manual=True)
+
+        @self.client.tree.command(name="help", description="アリスのコマンド一覧を表示します")
+        async def help_command(interaction: discord.Interaction):
+            await interaction.response.send_message(self.messages.MSG_HELP)
+        
         @self.client.tree.command(name="search_history", description="過去の解析記録を検索し、専用スレッドを作成します")
         @app_commands.describe(
           query="検索したいキーワードやURLの一部",
@@ -292,18 +297,22 @@ class CharacterBot:
             
             # ダイスロールスラッシュコマンド: /dice
             @self.client.tree.command(name="dice", description="ダイスを振ります")
-            @app_commands.describe(notation="ダイスの指定（例: 2d6, 1d100）")
+            @app_commands.describe(notation="ダイスの指定（例: 6, 2d6, 1d100）")
             async def dice_roll(interaction: discord.Interaction, notation: str):
                 import random
                 notation = notation.lower().strip()
-                match = re.match(r'^(\d+)d(\d+)$', notation)
+                match = re.match(r'^(\d+)(?:d(\d+))?$', notation)
                 
                 if not match:
                     await interaction.response.send_message(self.messages.MSG_DICE_INVALID, ephemeral=True)
                     return
                 
-                num_dice = int(match.group(1))
-                num_sides = int(match.group(2))
+                if match.group(2):
+                    num_dice = int(match.group(1))
+                    num_sides = int(match.group(2))
+                else:
+                    num_dice = 1
+                    num_sides = int(match.group(1))
                 
                 if num_dice < 1 or num_dice > 100 or num_sides < 2 or num_sides > 1000:
                     await interaction.response.send_message(self.messages.MSG_DICE_RANGE_ERROR, ephemeral=True)
@@ -323,6 +332,10 @@ class CharacterBot:
                     total=total
                 )
                 await interaction.response.send_message(result_msg)
+
+            @self.client.tree.command(name="help", description="コマンドの使い方を表示します")
+            async def help_command(interaction: discord.Interaction):
+                await interaction.response.send_message(self.messages.MSG_HELP)
     
     async def _run_timer_with_countdown(self, channel, message, total_seconds: int, task: str, timer_data: dict):
         """バックグラウンドでタイマーを実行（カウントダウン表示付き）"""

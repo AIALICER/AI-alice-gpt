@@ -27,6 +27,28 @@ MSG_DICE_RESULT = "🎲 ダイスロール結果です！\n**{notation}** → {r
 MSG_DICE_INVALID = "指定が正しくありません...！`XdY` 形式で指定してください（例: `2d6`）"
 MSG_DICE_RANGE_ERROR = "ダイスの個数は1〜100、面数は2〜1000で指定してください！"
 
+# ヘルプ
+MSG_HELP = """📖 **アリスのコマンド一覧**
+
+**タイマー**
+- `/timer` - タイマーを設定
+  - `minutes`: 分（0-180）
+  - `seconds`: 秒（0-59）
+  - `task`: タスク内容
+  - 例: `/timer minutes:3 task:カップ麺`
+
+- `/timers` - タイマー一覧を表示
+
+**ダイスロール**
+- `/dice` - ダイスを振る
+  - `notation`: ダイスの指定
+  - 例: `/dice notation:2d6` または `/dice notation:6`
+
+**その他**
+- `/help` - コマンドの使い方を表示
+- `/wiki_check` - Wikiの最新イベントを確認
+- `/search_history` - 過去の解析記録を検索"""
+
 # その他
 SUMMARY_COMMAND = "アリスに解析させる"
 MSG_RESPONSE_TOO_LONG = "応答が長すぎるため，ファイルの生成を行います！"
