@@ -7,6 +7,7 @@ Gemini API処理モジュール
 """
 
 import asyncio
+import time
 from google.genai import types
 from .config_base import gemini_client, gemini_client_fallback
 
@@ -291,9 +292,11 @@ async def determine_level_and_search(
     #if rule_result is not None:
         #return rule_result
     # API統合判定
+    step_start = time.time()
     history = []
     if get_recent_history_func:
         history = get_recent_history_func(channel_id, limit=4)
+    print(f"[GEMINI] [TIMING] ルーター用履歴取得: {time.time() - step_start:.2f}秒")
     
     # 会話履歴をテキスト形式に変換
     history_text = ""
@@ -342,6 +345,7 @@ Example: level:high,search:false,minutes:10,task:meeting,reference:true
 Example: level:medium,search:true,minutes:0,task:null,reference:false"""
 
     try:
+        step_start = time.time()
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
             model='gemini-3-flash-preview',
@@ -354,6 +358,7 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
                 temperature=0.1
             )
         )
+        print(f"[GEMINI] [TIMING] ルーターAPI呼び出し: {time.time() - step_start:.2f}秒")
         
         result = response.text.strip().lower()
         

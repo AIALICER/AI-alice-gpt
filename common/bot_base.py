@@ -476,17 +476,23 @@ class CharacterBot:
             )
             
             # 添付ファイルの処理（空メンション時は通常より多く読み込む）
+            step_start = time.time()
             file_parts = []
             if message.attachments:
                 max_attachments = 10 if is_empty_mention else 5
                 file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
+            if message.attachments:
+                print(f"[{self.display_name}] [TIMING] 添付ファイル処理: {time.time() - step_start:.2f}秒")
             
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
+            step_start = time.time()
             url_context = ""
             if prompt:
                 url_contents = await url_handler.process_urls_in_text(prompt)
                 if url_contents:
                     url_context = url_handler.format_url_contents(url_contents)
+            if prompt:
+                print(f"[{self.display_name}] [TIMING] プロンプトURL処理: {time.time() - step_start:.2f}秒")
             
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
@@ -506,10 +512,13 @@ class CharacterBot:
         file_parts: list,
         is_empty_mention: bool = False,
         url_context: str = "",
-        interaction: discord.Interaction = None,  # ← これを追加！
+        interaction: discord.Interaction = None,
         target_channel: discord.Thread = None
     ) -> None:
         """Gemini APIへのリクエストを処理"""
+        
+        total_start = time.time()
+        step_start = time.time()
         
         # 履歴取得数の設定（空メンション時は拡張）
         db_history_limit = 15 if is_empty_mention else 6
@@ -526,6 +535,8 @@ class CharacterBot:
             get_recent_history_func=get_history_func,
             character_name=self.display_name
         )
+        print(f"[{self.display_name}] [TIMING] 推論レベル判定: {time.time() - step_start:.2f}秒")
+        
         thinking_level = judgment['level']
         needs_search = judgment['search']
         timer_minutes = judgment['minutes']
@@ -570,11 +581,14 @@ class CharacterBot:
                 current_parts.append({"text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog})
             if file_parts:
                 current_parts.extend(file_parts)
+            step_start = time.time()
             if needs_history:
             # 履歴の取得（空メンション時は拡張）
              history = db_handler.get_recent_history(self.db_path, channel_id, limit=db_history_limit)
+             print(f"[{self.display_name}] [TIMING] DB履歴取得: {time.time() - step_start:.2f}秒")
             
              # Discord履歴の取得とマージ（空メンション時は拡張）
+             step_start = time.time()
              if ENABLE_DISCORD_HISTORY:
                 discord_history = await message_sender.fetch_discord_history(
                     message.channel,
@@ -582,11 +596,13 @@ class CharacterBot:
                     bot_id=self.client.user.id,
                     max_chars=DISCORD_HISTORY_MAX_CHARS
                 )
+                print(f"[{self.display_name}] [TIMING] Discord履歴取得: {time.time() - step_start:.2f}秒")
                 max_total = discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
                 history = message_sender.merge_histories(discord_history, history, max_total=max_total)
             else:
              history=[]
             # 履歴からURLを抽出してコンテンツを取得
+            step_start = time.time()
             history_url_context = ""
             for history_item in history:
                 if 'parts' in history_item:
@@ -595,6 +611,7 @@ class CharacterBot:
                             url_contents = await url_handler.process_urls_in_text(part['text'])
                             if url_contents:
                                 history_url_context += url_handler.format_url_contents(url_contents)
+            print(f"[{self.display_name}] [TIMING] 履歴URL処理: {time.time() - step_start:.2f}秒")
             
             # URLコンテンツをプロンプトに追加
             if url_context or history_url_context:
@@ -609,7 +626,9 @@ class CharacterBot:
                 "parts": current_parts
             }]
             # 記憶の取得
+            step_start = time.time()
             memories = db_handler.get_memories(self.db_path, channel_id)
+            print(f"[{self.display_name}] [TIMING] 記憶取得: {time.time() - step_start:.2f}秒")
             
             # 現在の日本時間
             current_jst = timer_handler.get_japan_time()
@@ -629,7 +648,9 @@ class CharacterBot:
             )
 
             # 登録済み全ユーザー一覧を取得（他ユーザーへのメンション用）
+            step_start = time.time()
             known_users_info = db_handler.get_all_users_info(self.db_path)
+            print(f"[{self.display_name}] [TIMING] ユーザー情報取得: {time.time() - step_start:.2f}秒")
             known_users_section = f"\n\n{known_users_info}" if known_users_info else ""
 
             enhanced_instruction = f"{self.system_instruction}{user_info}{known_users_section}\n\n[Current Japan Time]\n{current_jst}"
@@ -656,18 +677,23 @@ class CharacterBot:
                 )
             )
             # Gemini API呼び出し
+            step_start = time.time()
             response = await gemini_handler.generate_content_with_fallback(
                 client=gemini_client,
                 primary_model='gemini-3-flash-preview',
                 contents=input_contents,
                 config=current_config
             )
+            print(f"[{self.display_name}] [TIMING] Gemini API呼び出し: {time.time() - step_start:.2f}秒")
             
             # レスポンスからテキストを抽出
+            step_start = time.time()
             bot_response_text = await self._extract_response_text(
                 response, input_contents, full_system_instruction, tools
             )
+            print(f"[{self.display_name}] [TIMING] レスポンス抽出: {time.time() - step_start:.2f}秒")
             # 履歴の保存
+            step_start = time.time()
             if file_parts:
                 file_summary = await file_handler.summarize_attachments(prompt, file_parts)
                 save_user_text = f"{prompt}{file_summary}"
@@ -676,6 +702,7 @@ class CharacterBot:
             
             db_handler.save_message(self.db_path, current_channel_id, 'user', save_user_text)
             db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
+            print(f"[{self.display_name}] [TIMING] DB保存: {time.time() - step_start:.2f}秒")
             
             print(f"[{self.display_name}] DB saved: {save_user_text}")
             
@@ -684,6 +711,7 @@ class CharacterBot:
                 print(f"[{self.display_name}] Partner mention detected in response")
             dest = target_channel if target_channel else message.channel
 
+            step_start = time.time()
             if interaction and not target_channel:
             # 従来通り、自分だけにエフェメラルで返す場合
               await interaction.followup.send(bot_response_text, ephemeral=True)
@@ -694,6 +722,8 @@ class CharacterBot:
                bot_response_text,
                long_message_notice=self.messages.MSG_RESPONSE_TOO_LONG
              )
+            print(f"[{self.display_name}] [TIMING] メッセージ送信: {time.time() - step_start:.2f}秒")
+            print(f"[{self.display_name}] [TIMING] ========== 合計: {time.time() - total_start:.2f}秒 ==========")
             
             
         except Exception as e:
