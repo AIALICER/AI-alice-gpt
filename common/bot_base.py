@@ -9,13 +9,12 @@ from discord import app_commands
 import re
 import os
 import asyncio
-from typing import Dict, Any, Optional, List, Callable, Set, Union
-from re import Pattern
+from typing import Dict, Any, Optional, List, Callable, Set
 from google.genai import types
 import time
 from time import perf_counter
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta  # datetime, timezone, timedeltaはそのまま使用
 from datetime import time as dt_time  # timeクラスは別名でインポートして標準timeモジュールと区別
 from discord.ext import tasks  # @tasks.loop を使うために必要
@@ -36,7 +35,6 @@ from . import file_handler
 from . import timer_handler
 from . import message_sender
 from . import url_handler
-from . import record_url
 from . import news_handler
 
 
@@ -203,8 +201,8 @@ class CharacterBot:
         if datetime.now(JST).weekday() == 1:  # 火曜日
             print(f"[{self.display_name}] Checking wiki...")
             try:
-                from news_handler import check_wiki_logic
-                res = check_wiki_logic(self.db_path)
+                loop = asyncio.get_running_loop()
+                res = await loop.run_in_executor(None, news_handler.check_wiki_logic, self.db_path)
                 if res:
                     print(f"[{self.display_name}] Wiki check result: {res}")
             except Exception as e:
@@ -220,6 +218,7 @@ class CharacterBot:
         for msg_id in old_ids:
             self._processed_message_ids.discard(msg_id)
             self._message_id_timestamps.pop(msg_id, None)
+            self._message_locks.pop(msg_id, None)
     
     def _is_timer_related(self, content: str) -> bool:
         """タイマー関連のメッセージかどうかを判定"""
@@ -267,14 +266,17 @@ class CharacterBot:
             seconds: app_commands.Range[int, 0, 59] = 0,
             task: str = ""
         ):
-            await interaction.response.send_message(self.messages.MSG_TIMER_SET.format(minutes=minutes))
-            
             # タイマー設定
             total_seconds = minutes * 60 + seconds
+            time_str = f"{minutes}分" if seconds == 0 else f"{minutes}分{seconds}秒"
+            task_name = task if task else time_str
+            await interaction.response.send_message(
+                self.messages.MSG_TIMER_SET.format(time_str=time_str, task_name=task_name)
+            )
             channel_id = interaction.channel_id
             timer_data = {
                 "end_time": time.time() + total_seconds,
-                "task": task if task else f"{minutes}分タイマー",
+                "task": task_name,
                 "interaction": interaction
             }
             if channel_id not in self.active_timers:
@@ -282,13 +284,12 @@ class CharacterBot:
             self.active_timers[channel_id].append(timer_data)
             
             # 初期メッセージを送信
-            time_str = f"{minutes}分" if seconds == 0 else f"{minutes}分{seconds}秒"
-            initial_message = f"⏰ **{task if task else time_str}** のタイマー\n残り時間: {time_str}"
+            initial_message = f"⏰ **{task_name}** のタイマー\n残り時間: {time_str}"
             sent_message = await interaction.channel.send(initial_message)
             
             # バックグラウンドでタイマー実行（カウントダウン付き）
             asyncio.create_task(self._run_timer_with_countdown(
-                interaction.channel, sent_message, total_seconds, task if task else time_str, timer_data
+                interaction.channel, sent_message, total_seconds, task_name, timer_data
             ))
         
         # タイマー一覧スラッシュコマンド: /timers
@@ -403,7 +404,7 @@ class CharacterBot:
 
     async def _fetch_db_history(self, channel_id: int, limit: int) -> list:
         """DBから履歴を取得（並列処理用）"""
-        return db_handler.get_recent_history(self.db_path, channel_id, limit=limit)
+        return await asyncio.to_thread(db_handler.get_recent_history, self.db_path, channel_id, limit)
 
     async def _fetch_discord_history(self, channel, limit: int, is_empty_mention: bool) -> list:
         """Discordから履歴を取得（並列処理用）"""
@@ -416,7 +417,7 @@ class CharacterBot:
 
     async def _fetch_memories(self, channel_id: int) -> str:
         """記憶を取得（並列処理用）"""
-        return db_handler.get_memories(self.db_path, channel_id)
+        return await asyncio.to_thread(db_handler.get_memories, self.db_path, channel_id)
 
     async def _fetch_user_info(self, author) -> dict:
         """ユーザー情報を取得（並列処理用）"""
@@ -432,7 +433,7 @@ class CharacterBot:
             f"# ユーザーをメンションする場合は上記の Mention 文字列をそのまま使用すること"
         )
 
-        known_users_info = db_handler.get_all_users_info(self.db_path)
+        known_users_info = await asyncio.to_thread(db_handler.get_all_users_info, self.db_path)
 
         return {
             "user_info": user_info,
@@ -513,7 +514,8 @@ class CharacterBot:
             
             # ユーザー情報をDBに自動登録（upsert）
             with timer.measure_step("ユーザー情報登録"):
-                db_handler.upsert_user(
+                await asyncio.to_thread(
+                    db_handler.upsert_user,
                     self.db_path,
                     message.author.id,
                     message.author.display_name,
@@ -732,13 +734,19 @@ class CharacterBot:
             # 履歴URL処理
             with timer.measure_step("履歴URL処理"):
                 history_url_context = ""
-                for history_item in history:
-                    if 'parts' in history_item:
-                        for part in history_item['parts']:
-                            if 'text' in part:
-                                url_contents = await url_handler.process_urls_in_text(part['text'])
-                                if url_contents:
-                                    history_url_context += url_handler.format_url_contents(url_contents)
+                if history:
+                    history_texts: List[str] = []
+                    for history_item in history[-8:]:
+                        for part in history_item.get('parts', []):
+                            text = part.get('text') if isinstance(part, dict) else None
+                            if text:
+                                history_texts.append(text)
+
+                    if history_texts:
+                        combined_history_text = "\n".join(history_texts)
+                        history_url_contents = await url_handler.process_urls_in_text(combined_history_text)
+                        if history_url_contents:
+                            history_url_context = url_handler.format_url_contents(history_url_contents)
 
             if url_context or history_url_context:
                 url_parts_text = url_context + history_url_context
@@ -797,9 +805,9 @@ class CharacterBot:
                     save_user_text = f"{prompt}{file_summary}"
                 else:
                     save_user_text = prompt
-                
-                db_handler.save_message(self.db_path, current_channel_id, 'user', save_user_text)
-                db_handler.save_message(self.db_path, current_channel_id, 'model', bot_response_text)
+
+                await asyncio.to_thread(db_handler.save_message, self.db_path, current_channel_id, 'user', save_user_text)
+                await asyncio.to_thread(db_handler.save_message, self.db_path, current_channel_id, 'model', bot_response_text)
             
             print(f"[{self.display_name}] DB saved: {save_user_text}")
             

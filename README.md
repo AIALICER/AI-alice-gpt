@@ -23,7 +23,7 @@
 
 ## 必要要件
 
-- Python 3.8以上
+- Python 3.12以上
 - Discord Bot Token（キャラクターごとに必要）
 - Google Gemini API Key
 
@@ -40,8 +40,8 @@ Botをメンションして会話を開始：
 
 #### タイマー機能
 ```
-/timer set    - タイマーを設定（分単位）
-/timer check  - アクティブなタイマー一覧を表示
+/timer   - タイマーを設定（分・秒・タスク名対応）
+/timers  - アクティブなタイマー一覧を表示
 ```
 
 ### 特殊コマンド

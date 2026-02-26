@@ -22,8 +22,6 @@ async def add_memory_with_context(
     メッセージからURLやファイルを抽出し、内容を要約して url_memories テーブルに保存する
     ユーザーIDはメッセージの送信者（またはインタラクション実行者）を記録する
     """
-    print(type(message))
-    print(type(interaction))
     # 1. ユーザー情報の特定
     # インタラクションがあればその実行者、なければメッセージの送信者IDを取得
     if interaction:

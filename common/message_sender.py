@@ -231,11 +231,15 @@ def merge_histories(
     if not db_history:
         return discord_history[:max_total]
     
-    # Discord履歴を優先して使用
+    # Discord履歴を優先しつつ、DB履歴で不足分を補完
     merged = discord_history.copy()
-    
+
+    remaining = max_total - len(merged)
+    if remaining > 0:
+        merged.extend(db_history[-remaining:])
+
     if len(merged) > max_total:
         merged = merged[-max_total:]
-    
+
     print(f"[History Merge] Discord: {len(discord_history)}, DB: {len(db_history)} -> Result: {len(merged)}")
     return merged

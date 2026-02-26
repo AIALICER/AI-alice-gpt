@@ -9,6 +9,7 @@ def check_wiki_logic(db_path):
     print(f"\n[Debug] Wiki巡回を開始します: {TARGET_URL}")
     
     try:
+        first_link = None
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         res = requests.get(TARGET_URL, headers=headers, timeout=10)
         res.encoding = res.apparent_encoding 
@@ -64,7 +65,14 @@ def check_wiki_logic(db_path):
         # 3. DB照合
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE IF NOT EXISTS wiki_news (id INTEGER PRIMARY KEY, title TEXT, url TEXT UNIQUE)")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS wiki_news (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT,
+                    url TEXT UNIQUE,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             
             cursor.execute("SELECT id FROM wiki_news WHERE url = ?", (link,))
             row = cursor.fetchone()

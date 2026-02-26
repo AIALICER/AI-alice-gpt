@@ -29,6 +29,12 @@ BOT_REGISTRY: dict = {
     },
 }
 
+PARTNER_MAP: dict = {
+    "alice": "kei",
+    "kei": "alice",
+    "yuka": "alice",
+}
+
 
 def get_partner_info(my_character_name: str) -> dict:
     """
@@ -45,7 +51,13 @@ def get_partner_info(my_character_name: str) -> dict:
         dict: {"bot_id": int, "display_name": str}
               相方が見つからない場合は {"bot_id": None, "display_name": ""}
     """
+    partner_name = PARTNER_MAP.get(my_character_name)
+    if partner_name:
+        partner_info = BOT_REGISTRY.get(partner_name)
+        if partner_info and partner_info.get("bot_id") is not None:
+            return partner_info
+
     for name, info in BOT_REGISTRY.items():
-        if name != my_character_name and info["bot_id"] is not None:
+        if name != my_character_name and info.get("bot_id") is not None:
             return info
     return {"bot_id": None, "display_name": ""}

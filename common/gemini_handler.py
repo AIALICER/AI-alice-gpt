@@ -198,7 +198,7 @@ def generate_content_safe(client, primary_model: str, contents, config, fallback
             raise e
 
 
-def determine_level_and_search_rule_based(prompt: str) -> dict | None:
+def determine_level_and_search_rule_based(prompt: str):
     """
     ルールベースで推論レベルと検索要否を判定する
     
@@ -288,9 +288,9 @@ async def determine_level_and_search(
         dict: {'level': 'low/medium/high', 'search': True/False, 'minutes': float, 'task': str}
     """
     # ルールベースで事前判定
-    #rule_result = determine_level_and_search_rule_based(prompt)
-    #if rule_result is not None:
-        #return rule_result
+    rule_result = determine_level_and_search_rule_based(prompt)
+    if rule_result is not None:
+        return {**rule_result, 'reference': False}
     # API統合判定
     step_start = time.time()
     history = []

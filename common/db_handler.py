@@ -8,6 +8,7 @@
 
 import sqlite3
 import asyncio
+from typing import Optional
 from .config_base import gemini_client
 
 
@@ -257,7 +258,7 @@ def upsert_user(db_path: str, user_id: int, display_name: str, account_name: str
     conn.close()
 
 
-def get_user_mention(db_path: str, display_name: str) -> str | None:
+def get_user_mention(db_path: str, display_name: str) -> Optional[str]:
     """
     表示名（display_name）からDiscordメンション文字列を返す
 
@@ -269,7 +270,7 @@ def get_user_mention(db_path: str, display_name: str) -> str | None:
         display_name: 検索する表示名（部分一致）
 
     Returns:
-        str | None: '<@ユーザーID>' 形式、または None
+        Optional[str]: '<@ユーザーID>' 形式、または None
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
