@@ -22,6 +22,29 @@ DB_DIR = 'data'
 if not os.path.exists(DB_DIR):
     os.makedirs(DB_DIR)
 
+
+def _read_channel_id(env_name: str, default: int | None = None) -> int | None:
+    """環境変数からチャンネルIDを安全に読み込む。"""
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default
+
+    raw_value = raw_value.strip()
+    if not raw_value:
+        return default
+
+    try:
+        return int(raw_value)
+    except ValueError:
+        print(f"[config_base] Invalid channel id for {env_name}: {raw_value!r}. Fallback={default}")
+        return default
+
+# === 誕生日通知チャンネル設定 ===
+# ユーザー誕生日: None の場合はBotが参加している最初に見つかったテキストチャンネルに送信
+USER_BIRTHDAY_CHANNEL_ID: int | None = _read_channel_id("USER_BIRTHDAY_CHANNEL_ID")
+# ブルアカキャラ誕生日: お遊戯会チャンネル固定
+BLUEARCHIVE_BIRTHDAY_CHANNEL_ID: int = _read_channel_id("BLUEARCHIVE_BIRTHDAY_CHANNEL_ID", 1051173133228462220)
+
 # === Discord履歴設定 ===
 DISCORD_HISTORY_LIMIT = 5  # Discordから取得するメッセージ数
 ENABLE_DISCORD_HISTORY = True  # Discord履歴読み込み機能の有効/無効
@@ -144,9 +167,16 @@ def init_database(db_path: str) -> None:
         user_id INTEGER PRIMARY KEY,
         display_name TEXT,
         account_name TEXT,
+        birthday TEXT,
         last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     ''')
+    # birthday列が存在しない旧DBのマイグレーション
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN birthday TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            raise
     conn.commit()
     conn.close()
 

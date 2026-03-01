@@ -28,6 +28,8 @@ from .config_base import (
     DISCORD_HISTORY_LIMIT,
     ENABLE_DISCORD_HISTORY,
     DISCORD_HISTORY_MAX_CHARS,
+    USER_BIRTHDAY_CHANNEL_ID,
+    BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
 )
 from . import gemini_handler
 from . import db_handler
@@ -36,6 +38,7 @@ from . import timer_handler
 from . import message_sender
 from . import url_handler
 from . import news_handler
+from . import birthday_handler
 
 
 @dataclass
@@ -173,6 +176,15 @@ class CharacterBot:
         # DBの初期化
         self.db_path = get_db_path(character_name)
         init_database(self.db_path)
+        # ブルアカ誕生日専用DBの初期化（全Bot共有）
+        birthday_handler.init_birthday_db()
+        
+        # 全BotのIDセット（誕生日お祝い時のメンション除外用）
+        from characters.bot_id_list import BOT_REGISTRY
+        self._all_bot_ids: Set[int] = {
+            info["bot_id"] for info in BOT_REGISTRY.values()
+            if info.get("bot_id") is not None
+        }
         
         # システムインストラクションの読み込み
         if os.path.exists(system_instruction_path):
@@ -207,7 +219,142 @@ class CharacterBot:
                     print(f"[{self.display_name}] Wiki check result: {res}")
             except Exception as e:
                 print(f"[{self.display_name}] Wiki check error: {e}")
-    
+
+    @tasks.loop(time=dt_time(hour=0, minute=0, tzinfo=JST))
+    async def scheduled_birthday_check(self):
+        """
+        毎日0時（日本時間）に実行する誕生日チェックタスク。
+
+        - ユーザー誕生日: USER_BIRTHDAY_CHANNEL_ID のチャンネルにお祝いメッセージ
+        - ブルアカキャラ誕生日: BLUEARCHIVE_BIRTHDAY_CHANNEL_ID（お遊戯会）に告知
+        また、月曜日に1回ブルアカ誕生日データのスクレイピングを実行する。
+        """
+        print(f"[{self.display_name}] 誕生日チェックを開始します")
+        today = datetime.now(JST)
+        is_alice = self.character_name.lower() == "alice"
+
+        # ========== ブルアカキャラ誕生日の更新（月曜日のみ） ==========
+        if is_alice and today.weekday() == 0:  # 月曜日
+            try:
+                count = await birthday_handler.async_scrape_and_update()
+                print(f"[{self.display_name}] ブルアカ誕生日DB更新: {count}件")
+            except Exception as e:
+                print(f"[{self.display_name}] ブルアカ誕生日スクレイピングエラー: {e}")
+
+        # ========== ブルアカキャラ誕生日の告知 ==========
+        if is_alice:
+            try:
+                ba_channel = self.client.get_channel(BLUEARCHIVE_BIRTHDAY_CHANNEL_ID)
+                if ba_channel:
+                    ba_birthdays = await asyncio.to_thread(birthday_handler.get_today_character_birthdays)
+                    if ba_birthdays:
+                        names = "、".join(c["name"] for c in ba_birthdays)
+                        msg = await self._generate_birthday_message_ba(names)
+                        await ba_channel.send(
+                            msg,
+                            allowed_mentions=discord.AllowedMentions.none()
+                        )
+                        print(f"[{self.display_name}] ブルアカキャラ誕生日告知完了: {names}")
+            except Exception as e:
+                print(f"[{self.display_name}] ブルアカ誕生日告知エラー: {e}")
+
+        # ========== ユーザー誕生日のお祝い ==========
+        try:
+            user_birthdays = await asyncio.to_thread(
+                birthday_handler.get_today_user_birthdays, self.db_path
+            )
+            if user_birthdays:
+                # チャンネルを解決する
+                birthday_channel = None
+                if USER_BIRTHDAY_CHANNEL_ID:
+                    birthday_channel = self.client.get_channel(USER_BIRTHDAY_CHANNEL_ID)
+                if birthday_channel is None:
+                    # フォールバック: Botが参加しているサーバーの最初のテキストチャンネル
+                    for guild in self.client.guilds:
+                        for ch in guild.text_channels:
+                            if ch.permissions_for(guild.me).send_messages:
+                                birthday_channel = ch
+                                break
+                        if birthday_channel:
+                            break
+
+                if birthday_channel:
+                    for user_info in user_birthdays:
+                        user_id = user_info["user_id"]
+                        display_name = user_info["display_name"]
+                        # Botへのメンションは除外
+                        if user_id in self._all_bot_ids:
+                            continue
+                        msg = await self._generate_birthday_message_user(display_name)
+                        # メンションなしで送信（mention_allowed_parse=[]で全メンション無効）
+                        await birthday_channel.send(
+                            msg,
+                            allowed_mentions=discord.AllowedMentions.none()
+                        )
+                        print(f"[{self.display_name}] ユーザー誕生日祝い完了: {display_name}")
+        except Exception as e:
+            print(f"[{self.display_name}] ユーザー誕生日チェックエラー: {e}")
+
+    async def _generate_birthday_message_user(self, display_name: str) -> str:
+        """
+        ユーザー誕生日のお祝いメッセージをGemini APIで生成する。
+        失敗した場合はフォールバックメッセージを返す。
+        """
+        fallback = getattr(self.messages, 'MSG_BIRTHDAY_USER_FALLBACK',
+                           f"🎂 {display_name}さん、お誕生日おめでとうございます！")
+        prompt = (
+            f"あなたは {self.display_name} というキャラクターです。"
+            f"Discordサーバーのメンバー「{display_name}」さんの誕生日です。"
+            f"キャラクターらしい自然な誕生日のお祝いメッセージを1〜3文で書いてください。"
+            f"メンション（@記号）は絶対に使わないでください。"
+            f"絵文字を1〜2個含めてください。"
+        )
+        try:
+            from .config_base import gemini_client
+            from google.genai import types
+            response = await gemini_client.aio.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction,
+                    thinking_config=types.ThinkingConfig(thinking_level='minimal')
+                )
+            )
+            return response.text.strip() if response and response.text else fallback
+        except Exception as e:
+            print(f"[{self.display_name}] 誕生日メッセージ生成エラー: {e}")
+            return fallback
+
+    async def _generate_birthday_message_ba(self, names: str) -> str:
+        """
+        ブルアカキャラ誕生日の告知メッセージをGemini APIで生成する。
+        失敗した場合はシンプルなメッセージを返す。
+        """
+        fallback = getattr(self.messages, 'MSG_BIRTHDAY_BA_FALLBACK',
+                           f"🎂 今日は {names} の誕生日です！おめでとうございます！")
+        prompt = (
+            f"あなたは {self.display_name} というキャラクターです。"
+            f"ブルーアーカイブのキャラクター「{names}」の誕生日です。"
+            f"キャラクターらしい自然な誕生日告知メッセージを1〜3文で書いてください。"
+            f"メンション（@記号）は絶対に使わないでください。"
+            f"絵文字を1〜2個含めてください。"
+        )
+        try:
+            from .config_base import gemini_client
+            from google.genai import types
+            response = await gemini_client.aio.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction,
+                    thinking_config=types.ThinkingConfig(thinking_level='minimal')
+                )
+            )
+            return response.text.strip() if response and response.text else fallback
+        except Exception as e:
+            print(f"[{self.display_name}] ブルアカ誕生日メッセージ生成エラー: {e}")
+            return fallback
+
     def _cleanup_old_message_ids(self, current_time: float) -> None:
         """古いメッセージIDをクリーンアップ（5分経過したもの）"""
         timeout = 300  # 5分
@@ -251,7 +398,16 @@ class CharacterBot:
             # Wikiチェックのスケジュールタスクを開始
             if not self.scheduled_wiki_check.is_running():
                 self.scheduled_wiki_check.start()
-        
+            
+            # 誕生日チェックのスケジュールタスクを開始
+            if not self.scheduled_birthday_check.is_running():
+                self.scheduled_birthday_check.start()
+            
+            # 起動時にブルアカ誕生日DBが空ならスクレイピングを実行
+            if self.character_name.lower() == "alice" and birthday_handler.count_character_birthdays() == 0:
+                print(f"[{self.display_name}] ブルアカ誕生日DBが空のため初回スクレイピングを実行します")
+                asyncio.create_task(birthday_handler.async_scrape_and_update())
+
         @self.client.event
         async def on_message(message: discord.Message):
             """メッセージ受信時の処理"""
@@ -340,6 +496,96 @@ class CharacterBot:
             
             await interaction.response.send_message(result_message)
         
+        # ========== 誕生日関連コマンド ==========
+
+        # /birthday set <月> <日> - 誕生日登録
+        @self.tree.command(name="birthday_set", description="あなたの誕生日を登録します")
+        @app_commands.describe(month="月（1〜12）", day="日（1〜31）")
+        async def birthday_set(
+            interaction: discord.Interaction,
+            month: app_commands.Range[int, 1, 12],
+            day: app_commands.Range[int, 1, 31]
+        ):
+            # 存在しない日付のバリデーション（2000年はurl年なので 2/29 も有効）
+            try:
+                datetime(2000, month, day)
+            except ValueError:
+                invalid_msg = getattr(
+                    self.messages,
+                    'MSG_BIRTHDAY_INVALID_DATE',
+                    "その日付は存在しません。月と日の組み合わせを確認してください。"
+                )
+                await interaction.response.send_message(invalid_msg, ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True)
+            user_id = interaction.user.id
+            # DBにユーザーが登録されていなければ先にupsert
+            await asyncio.to_thread(
+                db_handler.upsert_user,
+                self.db_path,
+                user_id,
+                interaction.user.display_name,
+                interaction.user.name
+            )
+            await asyncio.to_thread(
+                birthday_handler.set_user_birthday,
+                self.db_path, user_id, month, day
+            )
+            msg = getattr(
+                self.messages,
+                'MSG_BIRTHDAY_SET',
+                f"🎂 {month}月{day}日を誕生日として登録しました！"
+            )
+            await interaction.followup.send(msg, ephemeral=True)
+
+        # /birthday_check [@ユーザー] - 誕生日確認
+        @self.tree.command(name="birthday_check", description="登録された誕生日を確認します")
+        @app_commands.describe(user="確認するユーザー（未指定の場合は自分）")
+        async def birthday_check(
+            interaction: discord.Interaction,
+            user: Optional[discord.Member] = None
+        ):
+            await interaction.response.defer(ephemeral=True)
+            target = user or interaction.user
+            birthday_str = await asyncio.to_thread(
+                birthday_handler.get_user_birthday,
+                self.db_path, target.id
+            )
+            if birthday_str:
+                m, d = birthday_str.split('-')
+                msg = f"🎂 {target.display_name}さんの誕生日は **{int(m)}月{int(d)}日** です！"
+            else:
+                msg = getattr(
+                    self.messages,
+                    'MSG_BIRTHDAY_NOT_SET',
+                    f"{target.display_name}さんの誕生日はまだ登録されていません。"
+                )
+            await interaction.followup.send(msg, ephemeral=True)
+
+        # /birthday_ba <キャラ名> - ブルアカキャラ誕生日照会
+        @self.tree.command(name="birthday_ba", description="ブルアカキャラの誕生日を答えます")
+        @app_commands.describe(name="キャラクター名（信中名で可）")
+        async def birthday_ba(
+            interaction: discord.Interaction,
+            name: str
+        ):
+            await interaction.response.defer()
+            result = await asyncio.to_thread(birthday_handler.get_character_birthday, name)
+            if result:
+                msg = (
+                    f"🎂 **{result['name']}** の誕生日は "
+                    f"**{result['month']}月{result['day']}日** です！"
+                )
+            else:
+                msg = (
+                    f"「{name}」の誕生日はDBに登録されていません。"
+                    f"キャラ名の表記を正確に入力するか、Google検索で確認してみてください。"
+                )
+            await interaction.followup.send(
+                msg,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
         self.client.run(self.discord_token)
 
 
