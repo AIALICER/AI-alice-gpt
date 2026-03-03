@@ -106,6 +106,37 @@ def get_today_user_birthdays(db_path: str) -> list[dict]:
     return [{"user_id": row["user_id"], "display_name": row["display_name"]} for row in rows]
 
 
+def get_all_user_birthdays(db_path: str) -> list[dict]:
+    """
+    DBに登録されている全ユーザーの誕生日を取得する。
+
+    Args:
+        db_path: ユーザーデータベースのパス
+
+    Returns:
+        list[dict]: [{"user_id": int, "display_name": str, "birthday": "MM-DD"}, ...]
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT user_id, display_name, birthday FROM users
+    WHERE birthday IS NOT NULL
+    ORDER BY birthday
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [
+        {
+            "user_id": row["user_id"],
+            "display_name": row["display_name"],
+            "birthday": row["birthday"]
+        }
+        for row in rows
+    ]
+
+
 # =========================================================
 # ブルアカキャラ誕生日の管理
 # =========================================================
