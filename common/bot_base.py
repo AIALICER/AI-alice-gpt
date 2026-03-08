@@ -5,6 +5,7 @@ Discord Bot基盤クラス
 """
 
 import discord
+import asyncio
 from discord import app_commands
 import re
 import os
@@ -500,7 +501,43 @@ class CharacterBot:
                 result_message = f"🎲 {notation} の結果: {num_dice}個のダイス = **{total}**"
             
             await interaction.response.send_message(result_message)
-        
+        @self.tree.command(name="gacha", description="ガチャシミュレータです")
+        @app_commands.describe(number="回す回数の指定（例: 1,10 ）")
+        async def gacha_sim(interaction: discord.Interaction, number: int):
+           async with interaction.channel.typing(): 
+            import random
+            list_result=[]
+            for i in range(number):
+                r=random.randint(1, 1000)
+                if r<31:
+                  result="Purple"
+                elif r<215:
+                  result="Gold"
+                else :
+                  result="blue"
+                list_result.append(result)
+            flag=1
+            if "Purple" in list_result:
+             r=random.randint(1, 10)
+             flag=2
+             if r<8:
+              file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+              await interaction.channel.send(file=file)
+             else:
+              file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+              await interaction.channel.send(file=file)
+            else:
+             file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+             await interaction.channel.send(file=file)
+            await asyncio.sleep(0.2)
+            for result in list_result:
+              if result=="Purple":
+               await interaction.channel.send("紫")
+              elif result=="Gold":
+               await interaction.channel.send("金")
+              else:
+               await interaction.channel.send("青")
+              await asyncio.sleep(0.1)   
         # ========== 誕生日関連コマンド ==========
         # birthday_set, birthday_check, birthday_ba, birthday_today はすべてアリス専用
         # 誕生日DBはアリスのみが管理するため、他のBotにはコマンド自体を登録しない
