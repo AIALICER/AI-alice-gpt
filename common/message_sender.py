@@ -256,10 +256,19 @@ def get_gacha_names(r="★3",m="○"):
             reader = csv.DictReader(f)
             
             for row in reader:
+                # 必須フィールドを安全に取得し、不足している行はスキップする
+                rarity = row.get("レアリティ")
+                status = row.get("ステータス")
+                name = row.get("名前")
+
+                # いずれかが欠損または None の場合はこの行を無視
+                if rarity is None or status is None or name is None:
+                    continue
+
                 # 条件: 「レアリティ」が ★3 かつ 「ステータス」が ○
                 # ※Wikiの表記に合わせて ★ か ☆ かをチェックしてください
-                if r in row["レアリティ"] and row["ステータス"] == m:
-                    star3_names.append(row["名前"])
+                if r in str(rarity) and status == m:
+                    star3_names.append(name)
         
         return star3_names
 
