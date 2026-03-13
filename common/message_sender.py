@@ -243,3 +243,35 @@ def merge_histories(
 
     print(f"[History Merge] Discord: {len(discord_history)}, DB: {len(db_history)} -> Result: {len(merged)}")
     return merged
+import csv
+
+def get_gacha_names(r="★3",m="○"):
+    filename = "common/blue_archive_chars.csv"
+    star3_names = []
+
+    try:
+        # encoding="utf_8_sig" は保存時と同じものを使います
+        with open(filename, "r", encoding="utf_8_sig") as f:
+            # DictReaderを使うと、列名（ヘッダー）でデータにアクセスできて便利です
+            reader = csv.DictReader(f)
+            
+            for row in reader:
+                # 必須フィールドを安全に取得し、不足している行はスキップする
+                rarity = row.get("レアリティ")
+                status = row.get("ステータス")
+                name = row.get("名前")
+
+                # いずれかが欠損または None の場合はこの行を無視
+                if rarity is None or status is None or name is None:
+                    continue
+
+                # 条件: 「レアリティ」が ★3 かつ 「ステータス」が ○
+                # ※Wikiの表記に合わせて ★ か ☆ かをチェックしてください
+                if r in str(rarity) and status == m:
+                    star3_names.append(name)
+        
+        return star3_names
+
+    except FileNotFoundError:
+        print("CSVファイルが見つかりません。先にスクレイピングを実行してください。")
+        return []
