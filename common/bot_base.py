@@ -532,13 +532,13 @@ class CharacterBot:
               r=random.randint(1, 10)
               flag=2
               if r<8:
-               file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+               file = discord.File("characters/AL_1S//assets/arisgatya2.jpg",silent=True)
                await interaction.channel.send(file=file)
               else:
-               file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+               file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
                await interaction.channel.send(file=file)
              else:
-              file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+              file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
               await interaction.channel.send(file=file)
              await asyncio.sleep(0.2)
              purple_list=message_sender.get_gacha_names()
@@ -573,13 +573,13 @@ class CharacterBot:
                  flag=2
                  if r<8:
                  
-                  file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+                  file = discord.File("characters/AL_1S//assets/arisgatya2.jpg",silent=True)
                   await interaction.channel.send(file=file)
                  else:
-                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
                   await interaction.channel.send(file=file)
                 else:
-                 file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                 file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
                  await interaction.channel.send(file=file)
                 await asyncio.sleep(0.2)
                 purple_list=message_sender.get_gacha_names()
@@ -605,7 +605,7 @@ class CharacterBot:
 # f-string を使った書き換え
            await interaction.channel.send(f"ガチャ結果は☆3: {count_purple} (確率 {p_purple:.1%}) "
                                           f"☆2: {count_gold} (確率 {p_gold:.1%}) "
-                                          f"☆1: {count_blue} (確率 {p_blue:.1%}) でした！",silent=True)
+                                          f"☆1: {count_blue} (確率 {p_blue:.1%}) でした！")
         # birthday_set, birthday_check, birthday_ba, birthday_today はすべてアリス専用
         # 誕生日DBはアリスのみが管理するため、他のBotにはコマンド自体を登録しない
         
