@@ -502,10 +502,13 @@ class CharacterBot:
             
             await interaction.response.send_message(result_message)
         @self.tree.command(name="gacha", description="ガチャシミュレータです")
-        @app_commands.describe(number="回す回数の指定（例: 1,10 ）")
-        async def gacha_sim(interaction: discord.Interaction, number: int):
+        @app_commands.describe(number="回す回数の指定（例: 1,10 ）",pickup="ピックアップしたいキャラ名です")
+        async def gacha_sim(interaction: discord.Interaction, number: int,pickup: str="ピックアップ"):
          
            async with interaction.channel.typing(): 
+            count_purple=0
+            count_gold=0
+            count_blue=0
             import random
             list_result=[]
             ten_n=int(number/10)
@@ -516,10 +519,13 @@ class CharacterBot:
                 r=random.randint(1, 1000)
                 if r<31:
                   result="Purple"
+                  count_purple=count_purple+1
                 elif r<215:
                   result="Gold"
+                  count_gold=count_gold+1
                 else :
                   result="blue"
+                  count_blue=count_blue+1
                 list_result.append(result)
              flag=1
              if "Purple" in list_result:
@@ -527,13 +533,13 @@ class CharacterBot:
               flag=2
               if r<8:
                file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
-               await interaction.channel.send(file=file,silent=True)
+               await interaction.channel.send(file=file)
               else:
                file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-               await interaction.channel.send(file=file,silent=True)
+               await interaction.channel.send(file=file)
              else:
               file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-              await interaction.channel.send(file=file,silent=True)
+              await interaction.channel.send(file=file)
              await asyncio.sleep(0.2)
              purple_list=message_sender.get_gacha_names()
              gold_list=message_sender.get_gacha_names(r="★2",m="○")
@@ -545,7 +551,7 @@ class CharacterBot:
                if r<4:
                 await interaction.channel.send(random.choice(purple_list),silent=True)
                else:
-                await interaction.channel.send("ピックアップ",silent=True)  
+                await interaction.channel.send(pickup,silent=True)  
               elif result=="Gold":
                await interaction.channel.send(random.choice(gold_list),silent=True)
               else:
@@ -568,13 +574,13 @@ class CharacterBot:
                  if r<8:
                  
                   file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
-                  await interaction.channel.send(file=file,silent=True)
+                  await interaction.channel.send(file=file)
                  else:
                   file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-                  await interaction.channel.send(file=file,silent=True)
+                  await interaction.channel.send(file=file)
                 else:
                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-                 await interaction.channel.send(file=file,silent=True)
+                 await interaction.channel.send(file=file)
                 await asyncio.sleep(0.2)
                 purple_list=message_sender.get_gacha_names()
                 gold_list=message_sender.get_gacha_names(r="★2",m="○")
@@ -585,13 +591,21 @@ class CharacterBot:
                   if r<4:
                    await interaction.channel.send(random.choice(purple_list),silent=True)
                   else:
-                   await interaction.channel.send("ピックアップ",silent=True) 
+                   await interaction.channel.send(pickup,silent=True) 
                  elif result=="Gold":
                   await interaction.channel.send(random.choice(gold_list),silent=True)
                  else:
                   await interaction.channel.send(random.choice(blue_list),silent=True)
                 await asyncio.sleep(0.1)   
-        # ========== 誕生日関連コマンド ==========
+            # 確率の計算（0.031...を%表記にしたい場合は *100 すると分かりやすいです）
+            p_purple = count_purple / number
+            p_gold = count_gold / number
+            p_blue = count_blue / number
+
+# f-string を使った書き換え
+           await interaction.channel.send(f"ガチャ結果は☆3: {count_purple} (確率 {p_purple:.1%}) "
+                                          f"☆2: {count_gold} (確率 {p_gold:.1%}) "
+                                          f"☆1: {count_blue} (確率 {p_blue:.1%}) でした！",silent=True)
         # birthday_set, birthday_check, birthday_ba, birthday_today はすべてアリス専用
         # 誕生日DBはアリスのみが管理するため、他のBotにはコマンド自体を登録しない
         
