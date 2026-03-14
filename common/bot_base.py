@@ -532,14 +532,14 @@ class CharacterBot:
               r=random.randint(1, 10)
               flag=2
               if r<8:
-               file = discord.File("characters/AL_1S//assets/arisgatya2.jpg",silent=True)
-               await interaction.channel.send(file=file)
+               file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+               await interaction.channel.send(file=file,silent=True)
               else:
-               file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
-               await interaction.channel.send(file=file)
+               file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+               await interaction.channel.send(file=file,silent=True)
              else:
-              file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
-              await interaction.channel.send(file=file)
+              file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+              await interaction.channel.send(file=file,silent=True)
              await asyncio.sleep(0.2)
              purple_list=message_sender.get_gacha_names()
              gold_list=message_sender.get_gacha_names(r="★2",m="○")
@@ -573,14 +573,14 @@ class CharacterBot:
                  flag=2
                  if r<8:
                  
-                  file = discord.File("characters/AL_1S//assets/arisgatya2.jpg",silent=True)
-                  await interaction.channel.send(file=file)
+                  file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+                  await interaction.channel.send(file=file,silent=True)
                  else:
-                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
-                  await interaction.channel.send(file=file)
+                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                  await interaction.channel.send(file=file,silent=True)
                 else:
-                 file = discord.File("characters/AL_1S//assets/arisgatya.jpg",silent=True)
-                 await interaction.channel.send(file=file)
+                 file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                 await interaction.channel.send(file=file,silent=True)
                 await asyncio.sleep(0.2)
                 purple_list=message_sender.get_gacha_names()
                 gold_list=message_sender.get_gacha_names(r="★2",m="○")
