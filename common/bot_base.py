@@ -856,6 +856,24 @@ class CharacterBot:
                     lines.append(f"  {char['name']}: {char['month']}月{char['day']}日")
                 
                 await interaction.followup.send("\n".join(lines))
+
+            # /db_help - ヘルプ
+            @self.tree.command(name="db_help", description="データベースコマンドの一覧を表示します")
+            async def db_help(interaction: discord.Interaction):
+                msg = """📖 **ブルーアーカイブ データベース コマンド一覧**
+
+- `/db_search [名前]` — キャラクターを名前で検索します（部分一致）
+- `/db_school [学校名]` — 指定学校のキャラクター一覧を表示します
+- `/db_rarity [1-3]` — レアリティ別のキャラクター一覧を表示します
+- `/db_today` — 今日が誕生日のブルアカキャラクターを表示します
+- `/db_help` — このヘルプを表示します
+
+**使用例:**
+- `/db_search アリス`
+- `/db_school ミレニアム`
+- `/db_rarity 3`
+"""
+                await interaction.followup.send(msg)
         else:
             print(f"[{self.display_name}] データベースコマンド登録スキップ - アリス以外")
 
