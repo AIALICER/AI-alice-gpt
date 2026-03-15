@@ -40,6 +40,7 @@ from . import message_sender
 from . import url_handler
 from . import news_handler
 from . import birthday_handler
+from . import character_handler
 
 
 @dataclass
@@ -771,6 +772,92 @@ class CharacterBot:
                 )
         else:
             print(f"[{self.display_name}] アリス判定: False - birthday_set, birthday_check, birthday_ba, birthday_today をスキップします")
+
+        # ブルアカキャラクターデータベースコマンド（アリス専用）
+        if self.character_name.lower() == "alice":
+            print(f"[{self.display_name}] データベースコマンド登録開始 - アリス専用")
+            
+            # /db_search - キャラ検索
+            @self.tree.command(name="db_search", description="ブルーアーカイブのキャラクターを検索します")
+            @app_commands.describe(name="キャラクター名（部分一致）")
+            async def db_search(interaction: discord.Interaction, name: str):
+                await interaction.response.defer()
+                char = await asyncio.to_thread(character_handler.get_character, name)
+                if char:
+                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                    lines = [
+                        f"=== 検索: {name} ===",
+                        f"【{char['name']}】",
+                        f"  レアリティ: ★ {char['rarity']}",
+                        f"  学校: {char['school_jp']}",
+                        f"  部活: {char['club_jp']}",
+                        f"  誕生日: {birthday}",
+                        f"  身長: {char['height']}",
+                        f"  趣味: {char['hobby']}"
+                    ]
+                    msg = "\n".join(lines)
+                else:
+                    msg = f"「{name}」に該当するキャラクターは見つかりませんでした。"
+                await interaction.followup.send(msg)
+
+            # /db_school - 学校別一覧
+            @self.tree.command(name="db_school", description="学校のキャラクター一覧を表示します")
+            @app_commands.describe(school="学校名（日本語または英語）")
+            async def db_school(interaction: discord.Interaction, school: str):
+                await interaction.response.defer()
+                characters = await asyncio.to_thread(character_handler.get_characters_by_school, school)
+                if not characters:
+                    await interaction.followup.send(f"「{school}」に該当する学校は見つかりませんでした。")
+                    return
+                
+                school_name = characters[0]['school_jp']
+                school_code = characters[0]['school']
+                lines = [f"=== 学校: {school_name} ({school_code}) ==="]
+                lines.append(f"合計: {len(characters)}人")
+                for char in characters:
+                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                    lines.append(f"  {char['name']:<12} ★{char['rarity']}   {birthday}")
+                
+                await interaction.followup.send("\n".join(lines))
+
+            # /db_rarity - レアリティ別一覧
+            @self.tree.command(name="db_rarity", description="レアリティ別のキャラクター一覧を表示します")
+            @app_commands.describe(rarity="レアリティ（1〜3）")
+            async def db_rarity(interaction: discord.Interaction, rarity: app_commands.Range[int, 1, 3]):
+                await interaction.response.defer()
+                all_chars = await asyncio.to_thread(character_handler.get_all_characters)
+                characters = [c for c in all_chars if c['rarity'] == rarity]
+                
+                if not characters:
+                    await interaction.followup.send(f"★{rarity}のキャラクターは見つかりませんでした。")
+                    return
+                
+                lines = [f"=== レアリティ★{rarity} ==="]
+                lines.append(f"合計: {len(characters)}人")
+                for char in characters:
+                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                    lines.append(f"  {char['name']:<12} {char['school_jp']:<15} {birthday}")
+                
+                await interaction.followup.send("\n".join(lines))
+
+            # /db_today - 今日の誕生日
+            @self.tree.command(name="db_today", description="今日が誕生日のブルアカキャラクターを表示します")
+            async def db_today(interaction: discord.Interaction):
+                await interaction.response.defer()
+                today = datetime.now(JST)
+                characters = await asyncio.to_thread(character_handler.get_today_character_birthdays)
+                
+                if not characters:
+                    await interaction.followup.send(f"今日({today.month}月{today.day}日)は誕生日であるブルアカキャラはいません。")
+                    return
+                
+                lines = [f"=== 今日({today.month}月{today.day}日)の誕生日 ==="]
+                for char in characters:
+                    lines.append(f"  {char['name']}: {char['month']}月{char['day']}日")
+                
+                await interaction.followup.send("\n".join(lines))
+        else:
+            print(f"[{self.display_name}] データベースコマンド登録スキップ - アリス以外")
 
         self.client.run(self.discord_token)
 
