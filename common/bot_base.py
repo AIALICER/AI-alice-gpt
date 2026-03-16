@@ -387,6 +387,10 @@ class CharacterBot:
         """Botを起動"""
         print(f"[{self.display_name}] Starting bot...")
         
+        # ギルド固有コマンド用サーバーID
+        TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "751791380837171340")
+        target_guild_id = int(TARGET_GUILD_ID) if TARGET_GUILD_ID else None
+        
         @self.client.event
         async def on_ready():
             """Bot準備完了時の処理"""
@@ -395,9 +399,17 @@ class CharacterBot:
                 command_names = [cmd.name for cmd in self.tree.get_commands()]
                 print(f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}")
                 print(f"[{self.display_name}] コマンドを同期します...")
-                for guild in self.client.guilds:
-                    self.tree.copy_global_to(guild=guild)
-                    await self.tree.sync(guild=guild)
+                
+                # 特定のギルドにのみコマンドを登録
+                if target_guild_id:
+                    target_guild = discord.Object(id=target_guild_id)
+                    self.tree.copy_global_to(guild=target_guild)
+                    await self.tree.sync(guild=target_guild)
+                    print(f"[{self.display_name}] ギルド {target_guild_id} にコマンドを登録しました")
+                else:
+                    for guild in self.client.guilds:
+                        self.tree.copy_global_to(guild=guild)
+                        await self.tree.sync(guild=guild)
                 print(f"[{self.display_name}] コマンド同期完了！")
             except Exception as e:
                 print(f"[{self.display_name}] Command sync error: {e}")
