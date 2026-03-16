@@ -27,3 +27,4 @@ github-runner-compose.yaml
 # OS files
 .DS_Store
 Thumbs.db
+nul

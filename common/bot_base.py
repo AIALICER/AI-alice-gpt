@@ -4,53 +4,62 @@ Discord Bot基盤クラス
 キャラクターごとの設定を受け取り、共通のメッセージ処理ロジックを提供する。
 """
 
-import discord
 import asyncio
-from discord import app_commands
-import re
 import os
-import asyncio
-from typing import Dict, Any, Optional, List, Callable, Set
-from google.genai import types
+import re
 import time
-from time import perf_counter
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta  # datetime, timezone, timedeltaはそのまま使用
-from datetime import time as dt_time  # timeクラスは別名でインポートして標準timeモジュールと区別
+from datetime import (  # datetime, timezone, timedeltaはそのまま使用
+    datetime,
+    timedelta,
+    timezone,
+)
+from datetime import (
+    time as dt_time,  # timeクラスは別名でインポートして標準timeモジュールと区別
+)
+from time import perf_counter
+from typing import Any, Callable, Dict, List, Optional, Set
+
+import discord
+from discord import app_commands
 from discord.ext import tasks  # @tasks.loop を使うために必要
+from google.genai import types
 
 # 日本標準時 (JST) の定義
 JST = timezone(timedelta(hours=9))
+from . import (
+    birthday_handler,
+    character_handler,
+    db_handler,
+    file_handler,
+    gemini_handler,
+    message_sender,
+    news_handler,
+    timer_handler,
+    url_handler,
+)
 from .config_base import (
+    BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
+    DISCORD_HISTORY_LIMIT,
+    DISCORD_HISTORY_MAX_CHARS,
+    ENABLE_DISCORD_HISTORY,
+    USER_BIRTHDAY_CHANNEL_ID,
     gemini_client,
     get_db_path,
     init_database,
-    DISCORD_HISTORY_LIMIT,
-    ENABLE_DISCORD_HISTORY,
-    DISCORD_HISTORY_MAX_CHARS,
-    USER_BIRTHDAY_CHANNEL_ID,
-    BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
 )
-from . import gemini_handler
-from . import db_handler
-from . import file_handler
-from . import timer_handler
-from . import message_sender
-from . import url_handler
-from . import news_handler
-from . import birthday_handler
-from . import character_handler
 
 
 @dataclass
 class TimingData:
     """タイミング計測データクラス"""
+
     step_name: str
     start_time: float
     end_time: float = 0.0
     duration: float = 0.0
-    
+
     def finalize(self, end_time: float):
         """計測を終了して継続時間を計算"""
         self.end_time = end_time
@@ -59,7 +68,7 @@ class TimingData:
 
 class PerformanceTimer:
     """パフォーマンス計測クラス"""
-    
+
     def __init__(self, display_name: str, print_results: bool = True):
         self.display_name = display_name
         self.print_results = print_results
@@ -67,20 +76,20 @@ class PerformanceTimer:
         self.current_step: Optional[TimingData] = None
         self.total_start: float = 0.0
         self._step_counter = 0
-    
+
     def start_total(self):
         """全体計測を開始"""
         self.total_start = perf_counter()
         self.timings = []
         self._step_counter = 0
-    
+
     @contextmanager
     def measure_step(self, step_name: str):
         """ステップ計測用コンテキストマネージャー"""
         start = perf_counter()
         timing = TimingData(step_name=step_name, start_time=start)
         self.current_step = timing
-        
+
         try:
             yield self
         finally:
@@ -88,46 +97,54 @@ class PerformanceTimer:
             timing.finalize(end)
             self.timings.append(timing)
             self._step_counter += 1
-            
+
             if self.print_results:
-                print(f"[{self.display_name}] [TIMING] {step_name}: {timing.duration:.3f}秒")
-    
+                print(
+                    f"[{self.display_name}] [TIMING] {step_name}: {timing.duration:.3f}秒"
+                )
+
     def measure_parallel_start(self, step_name: str) -> TimingData:
         """並列処理の開始時間を記録"""
         timing = TimingData(step_name=step_name, start_time=perf_counter())
         self.current_step = timing
         return timing
-    
+
     def measure_parallel_end(self, timing: TimingData):
         """並列処理の終了時間を記録"""
         timing.finalize(perf_counter())
         self.timings.append(timing)
         self._step_counter += 1
-        
+
         if self.print_results:
-            print(f"[{self.display_name}] [TIMING] {timing.step_name}: {timing.duration:.3f}秒")
-    
+            print(
+                f"[{self.display_name}] [TIMING] {timing.step_name}: {timing.duration:.3f}秒"
+            )
+
     def print_summary(self):
         """計測サマリーを出力"""
         if not self.print_results or not self.timings:
             return
-        
+
         total_duration = perf_counter() - self.total_start
-        
+
         print(f"\n[{self.display_name}] [TIMING] ====== パフォーマンスサマリー ======")
         print(f"ステップ数: {len(self.timings)}")
-        
+
         for i, timing in enumerate(self.timings, 1):
-            percentage = (timing.duration / total_duration * 100) if total_duration > 0 else 0
-            print(f"  {i}. {timing.step_name}: {timing.duration:.3f}秒 ({percentage:.1f}%)")
-        
+            percentage = (
+                (timing.duration / total_duration * 100) if total_duration > 0 else 0
+            )
+            print(
+                f"  {i}. {timing.step_name}: {timing.duration:.3f}秒 ({percentage:.1f}%)"
+            )
+
         print(f"合計時間: {total_duration:.3f}秒")
         print(f"[{self.display_name}] [TIMING] =================================\n")
-    
+
     def get_timings_dict(self) -> Dict[str, float]:
         """計測結果を辞書形式で取得（分析用）"""
         return {timing.step_name: timing.duration for timing in self.timings}
-    
+
     def get_slowest_step(self) -> Optional[TimingData]:
         """最も遅いステップを取得"""
         if not self.timings:
@@ -138,7 +155,7 @@ class PerformanceTimer:
 class CharacterBot:
     """
     キャラクター別Discord Botの基盤クラス
-    
+
     Args:
         character_name: 内部キャラクター名（DB名に使用、例: "alice", "kei"）
         display_name: 表示用キャラクター名（例: "アリス", "ケイ"）
@@ -149,7 +166,7 @@ class CharacterBot:
         messages: メッセージテンプレートモジュール
         special_commands: 特殊コマンド辞書（オプション）
     """
-    
+
     def __init__(
         self,
         character_name: str,
@@ -159,7 +176,7 @@ class CharacterBot:
         discord_token_env: str,
         system_instruction_path: str,
         messages: Any,
-        special_commands: Optional[Dict[str, Callable]] = None
+        special_commands: Optional[Dict[str, Callable]] = None,
     ):
         self.character_name = character_name
         self.display_name = display_name
@@ -168,47 +185,50 @@ class CharacterBot:
         self.messages = messages
         self.special_commands = special_commands or {}
         self.summary_tasks: Dict[int, asyncio.Task] = {}
-        
+
         # Discordクライアントの設定
         intents = discord.Intents.default()
         intents.message_content = True
         self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
-        
+
         # DBの初期化
         self.db_path = get_db_path(character_name)
         init_database(self.db_path)
         # ブルアカ誕生日専用DBの初期化（全Bot共有）
         character_handler.init_birthday_db()
-        
         # 全BotのIDセット（誕生日お祝い時のメンション除外用）
         from characters.bot_id_list import BOT_REGISTRY
+
         self._all_bot_ids: Set[int] = {
-            info["bot_id"] for info in BOT_REGISTRY.values()
+            info["bot_id"]
+            for info in BOT_REGISTRY.values()
             if info.get("bot_id") is not None
         }
-        
+
         # システムインストラクションの読み込み
         if os.path.exists(system_instruction_path):
-            with open(system_instruction_path, 'r', encoding='utf-8') as f:
+            with open(system_instruction_path, "r", encoding="utf-8") as f:
                 self.system_instruction = f.read()
         else:
-            print(f"Warning: System instruction file not found at {system_instruction_path}")
+            print(
+                f"Warning: System instruction file not found at {system_instruction_path}"
+            )
             self.system_instruction = ""
-        
+
         # Discord Bot Tokenの取得
         self.discord_token = os.getenv(discord_token_env)
         if not self.discord_token:
             raise ValueError(f"Environment variable {discord_token_env} is not set")
-        
+
         # アクティブなタイマーを管理
         self.active_timers: Dict[int, List[Dict[str, Any]]] = {}
-        
+
         # 処理済みメッセージIDの追跡（重複処理防止）
         self._processed_message_ids: Set[int] = set()
         self._message_id_timestamps: Dict[int, float] = {}
         self._message_locks: Dict[int, asyncio.Lock] = {}
-    
+
     @tasks.loop(time=dt_time(hour=9, minute=0, tzinfo=JST))
     async def scheduled_wiki_check(self):
         """毎日午前9時（日本時間）にWikiをチェックするタスク"""
@@ -216,7 +236,9 @@ class CharacterBot:
             print(f"[{self.display_name}] Checking wiki...")
             try:
                 loop = asyncio.get_running_loop()
-                res = await loop.run_in_executor(None, news_handler.check_wiki_logic, self.db_path)
+                res = await loop.run_in_executor(
+                    None, news_handler.check_wiki_logic, self.db_path
+                )
                 if res:
                     print(f"[{self.display_name}] Wiki check result: {res}")
             except Exception as e:
@@ -248,15 +270,18 @@ class CharacterBot:
             try:
                 ba_channel = self.client.get_channel(BLUEARCHIVE_BIRTHDAY_CHANNEL_ID)
                 if ba_channel:
-                    ba_birthdays = await asyncio.to_thread(character_handler.get_today_character_birthdays)
+                    ba_birthdays = await asyncio.to_thread(
+                        character_handler.get_today_character_birthdays
+                    )
                     if ba_birthdays:
                         names = "、".join(c["name"] for c in ba_birthdays)
                         msg = await self._generate_birthday_message_ba(names)
                         await ba_channel.send(
-                            msg,
-                            allowed_mentions=discord.AllowedMentions.none()
+                            msg, allowed_mentions=discord.AllowedMentions.none()
                         )
-                        print(f"[{self.display_name}] ブルアカキャラ誕生日告知完了: {names}")
+                        print(
+                            f"[{self.display_name}] ブルアカキャラ誕生日告知完了: {names}"
+                        )
             except Exception as e:
                 print(f"[{self.display_name}] ブルアカ誕生日告知エラー: {e}")
 
@@ -290,10 +315,11 @@ class CharacterBot:
                         msg = await self._generate_birthday_message_user(display_name)
                         # メンションなしで送信（mention_allowed_parse=[]で全メンション無効）
                         await birthday_channel.send(
-                            msg,
-                            allowed_mentions=discord.AllowedMentions.none()
+                            msg, allowed_mentions=discord.AllowedMentions.none()
                         )
-                        print(f"[{self.display_name}] ユーザー誕生日祝い完了: {display_name}")
+                        print(
+                            f"[{self.display_name}] ユーザー誕生日祝い完了: {display_name}"
+                        )
         except Exception as e:
             print(f"[{self.display_name}] ユーザー誕生日チェックエラー: {e}")
 
@@ -302,8 +328,11 @@ class CharacterBot:
         ユーザー誕生日のお祝いメッセージをGemini APIで生成する。
         失敗した場合はフォールバックメッセージを返す。
         """
-        fallback = getattr(self.messages, 'MSG_BIRTHDAY_USER_FALLBACK',
-                           f"🎂 {display_name}先生、お誕生日おめでとうございます！今日という日が先生にとって最高の一日になりますように！")
+        fallback = getattr(
+            self.messages,
+            "MSG_BIRTHDAY_USER_FALLBACK",
+            f"🎂 {display_name}先生、お誕生日おめでとうございます！今日という日が先生にとって最高の一日になりますように！",
+        )
         prompt = (
             f"あなたは {self.display_name} というキャラクターです。"
             f"Discordサーバーのメンバー「{display_name}先生」の誕生日です。"
@@ -314,14 +343,16 @@ class CharacterBot:
             f"・他のキャラクターやユーザーへのメンション（@記号）は絶対に使わないこと"
         )
         try:
-            from .config_base import gemini_client
             from google.genai import types
+
+            from .config_base import gemini_client
+
             response = await gemini_client.aio.models.generate_content(
-                model='gemini-2.5-flash',
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction
-                )
+                ),
             )
             return response.text.strip() if response and response.text else fallback
         except Exception as e:
@@ -333,8 +364,11 @@ class CharacterBot:
         ブルアカキャラ誕生日の告知メッセージをGemini APIで生成する。
         失敗した場合はシンプルなメッセージを返す。
         """
-        fallback = getattr(self.messages, 'MSG_BIRTHDAY_BA_FALLBACK',
-                           f"🎂 今日は {names} の誕生日です！おめでとうございます！")
+        fallback = getattr(
+            self.messages,
+            "MSG_BIRTHDAY_BA_FALLBACK",
+            f"🎂 今日は {names} の誕生日です！おめでとうございます！",
+        )
         prompt = (
             f"あなたは {self.display_name} というキャラクターです。"
             f"ブルーアーカイブのキャラクター「{names}」の誕生日です。"
@@ -343,14 +377,16 @@ class CharacterBot:
             f"絵文字を1〜2個含めてください。"
         )
         try:
-            from .config_base import gemini_client
             from google.genai import types
+
+            from .config_base import gemini_client
+
             response = await gemini_client.aio.models.generate_content(
-                model='gemini-2.5-flash',
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction
-                )
+                ),
             )
             return response.text.strip() if response and response.text else fallback
         except Exception as e:
@@ -361,51 +397,56 @@ class CharacterBot:
         """古いメッセージIDをクリーンアップ（5分経過したもの）"""
         timeout = 300  # 5分
         old_ids = [
-            msg_id for msg_id, timestamp in self._message_id_timestamps.items()
+            msg_id
+            for msg_id, timestamp in self._message_id_timestamps.items()
             if current_time - timestamp > timeout
         ]
         for msg_id in old_ids:
             self._processed_message_ids.discard(msg_id)
             self._message_id_timestamps.pop(msg_id, None)
             self._message_locks.pop(msg_id, None)
-    
+
     def _is_timer_related(self, content: str) -> bool:
         """タイマー関連のメッセージかどうかを判定"""
         timer_keywords = [
-            r'\d+分.*タイマー',
-            r'タイマー.*\d+分',
-            r'\d+分.*たいまー',
-            r'\d+秒.*タイマー',
-            r'\d+秒.*たいまー',
+            r"\d+分.*タイマー",
+            r"タイマー.*\d+分",
+            r"\d+分.*たいまー",
+            r"\d+秒.*タイマー",
+            r"\d+秒.*たいまー",
         ]
         for pattern in timer_keywords:
             if re.search(pattern, content):
                 return True
         return False
-    
+
     def run(self):
         """Botを起動"""
         print(f"[{self.display_name}] Starting bot...")
-        
+
         # ギルド固有コマンド用サーバーID
         TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "751791380837171340")
         target_guild_id = int(TARGET_GUILD_ID) if TARGET_GUILD_ID else None
-        
+
         @self.client.event
         async def on_ready():
             """Bot準備完了時の処理"""
             print(f"[{self.display_name}] Logged in as {self.client.user}")
             try:
                 command_names = [cmd.name for cmd in self.tree.get_commands()]
-                print(f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}")
+                print(
+                    f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}"
+                )
                 print(f"[{self.display_name}] コマンドを同期します...")
-                
+
                 # 特定のギルドにのみコマンドを登録
                 if target_guild_id:
                     target_guild = discord.Object(id=target_guild_id)
                     self.tree.copy_global_to(guild=target_guild)
                     await self.tree.sync(guild=target_guild)
-                    print(f"[{self.display_name}] ギルド {target_guild_id} にコマンドを登録しました")
+                    print(
+                        f"[{self.display_name}] ギルド {target_guild_id} にコマンドを登録しました"
+                    )
                 else:
                     for guild in self.client.guilds:
                         self.tree.copy_global_to(guild=guild)
@@ -413,60 +454,77 @@ class CharacterBot:
                 print(f"[{self.display_name}] コマンド同期完了！")
             except Exception as e:
                 print(f"[{self.display_name}] Command sync error: {e}")
-            
+
             # Wikiチェックのスケジュールタスクを開始
             if not self.scheduled_wiki_check.is_running():
                 self.scheduled_wiki_check.start()
-            
+
             # 誕生日チェックのスケジュールタスクを開始
             if not self.scheduled_birthday_check.is_running():
                 self.scheduled_birthday_check.start()
-            
+
             # 起動時にブルアカ誕生日DBが空ならスクレイピングを実行
-            if self.character_name.lower() == "alice" and character_handler.count_character_birthdays() == 0:
-                print(f"[{self.display_name}] ブルアカ誕生日DBが空のため初回スクレイピングを実行します")
+            if (
+                self.character_name.lower() == "alice"
+                and character_handler.count_character_birthdays() == 0
+            ):
+                print(
+                    f"[{self.display_name}] ブルアカ誕生日DBが空のため初回スクレイピングを実行します"
+                )
                 asyncio.create_task(character_handler.async_scrape_and_update())
 
         @self.client.event
         async def on_message(message: discord.Message):
             """メッセージ受信時の処理"""
             await self._handle_message(message)
-        
+
         # タイマー設定スラッシュコマンド: /timer
         @self.tree.command(name="timer", description="タイマーを設定します")
-        @app_commands.describe(minutes="分数（1〜180分）", seconds="秒数（0〜59秒、省略可）", task="タスク名（省略可）")
+        @app_commands.describe(
+            minutes="分数（1〜180分）",
+            seconds="秒数（0〜59秒、省略可）",
+            task="タスク名（省略可）",
+        )
         async def timer_set(
             interaction: discord.Interaction,
             minutes: app_commands.Range[int, 1, 180],
             seconds: app_commands.Range[int, 0, 59] = 0,
-            task: str = ""
+            task: str = "",
         ):
             # タイマー設定
             total_seconds = minutes * 60 + seconds
             time_str = f"{minutes}分" if seconds == 0 else f"{minutes}分{seconds}秒"
             task_name = task if task else time_str
             await interaction.response.send_message(
-                self.messages.MSG_TIMER_SET.format(time_str=time_str, task_name=task_name)
+                self.messages.MSG_TIMER_SET.format(
+                    time_str=time_str, task_name=task_name
+                )
             )
             channel_id = interaction.channel_id
             timer_data = {
                 "end_time": time.time() + total_seconds,
                 "task": task_name,
-                "interaction": interaction
+                "interaction": interaction,
             }
             if channel_id not in self.active_timers:
                 self.active_timers[channel_id] = []
             self.active_timers[channel_id].append(timer_data)
-            
+
             # 初期メッセージを送信
             initial_message = f"⏰ **{task_name}** のタイマー\n残り時間: {time_str}"
             sent_message = await interaction.channel.send(initial_message)
-            
+
             # バックグラウンドでタイマー実行（カウントダウン付き）
-            asyncio.create_task(self._run_timer_with_countdown(
-                interaction.channel, sent_message, total_seconds, task_name, timer_data
-            ))
-        
+            asyncio.create_task(
+                self._run_timer_with_countdown(
+                    interaction.channel,
+                    sent_message,
+                    total_seconds,
+                    task_name,
+                    timer_data,
+                )
+            )
+
         # タイマー一覧スラッシュコマンド: /timers
         @self.tree.command(name="timers", description="現在のタイマー一覧を表示します")
         async def timer_list(interaction: discord.Interaction):
@@ -477,162 +535,206 @@ class CharacterBot:
                 timer_list_header=self.messages.MSG_ACTIVE_TIMERS_HEADER,
                 remaining_template=self.messages.MSG_TIMER_REMAINING,
                 soon_template=self.messages.MSG_TIMER_SOON,
-                timers_dict=self.active_timers
+                timers_dict=self.active_timers,
             )
             await interaction.response.send_message(status_message)
-        
+
         # ダイスロールスラッシュコマンド: /dice
         @self.tree.command(name="dice", description="ダイスを振ります")
         @app_commands.describe(notation="ダイスの指定（例: 6, 2d6, 1d100）")
         async def dice_roll(interaction: discord.Interaction, notation: str):
             import random
+
             notation = notation.lower().strip()
-            match = re.match(r'^(\d+)(?:d(\d+))?$', notation)
-            
+            match = re.match(r"^(\d+)(?:d(\d+))?$", notation)
+
             if not match:
-                await interaction.response.send_message(self.messages.MSG_DICE_INVALID, ephemeral=True)
+                await interaction.response.send_message(
+                    self.messages.MSG_DICE_INVALID, ephemeral=True
+                )
                 return
-            
+
             if match.group(2):
                 num_dice = int(match.group(1))
                 num_sides = int(match.group(2))
             else:
                 num_dice = 1
                 num_sides = int(match.group(1))
-            
+
             if num_dice < 1 or num_dice > 100 or num_sides < 2 or num_sides > 1000:
-                await interaction.response.send_message(self.messages.MSG_DICE_RANGE_ERROR, ephemeral=True)
+                await interaction.response.send_message(
+                    self.messages.MSG_DICE_RANGE_ERROR, ephemeral=True
+                )
                 return
-            
+
             rolls = [random.randint(1, num_sides) for _ in range(num_dice)]
             total = sum(rolls)
-            
+
             if num_dice <= 10:
                 rolls_str = ", ".join(map(str, rolls))
                 result_message = f"🎲 {notation} の結果: [{rolls_str}] = **{total}**"
             else:
-                result_message = f"🎲 {notation} の結果: {num_dice}個のダイス = **{total}**"
-            
-            await interaction.response.send_message(result_message)
-        @self.tree.command(name="gacha", description="ガチャシミュレータです")
-        @app_commands.describe(number="回す回数の指定（例: 1,10 ）",pickup="ピックアップしたいキャラ名です")
-        async def gacha_sim(interaction: discord.Interaction, number: int,pickup: str="ピックアップ"):
-         
-           async with interaction.channel.typing(): 
-            count_purple=0
-            count_gold=0
-            count_blue=0
-            import random
-            list_result=[]
-            ten_n=int(number/10)
-            sin_n=number%10
-            for j in range(ten_n):
-             list_result=[]
-             for i in range(10):
-                r=random.randint(1, 1000)
-                if r<31:
-                  result="Purple"
-                  count_purple=count_purple+1
-                elif r<215:
-                  result="Gold"
-                  count_gold=count_gold+1
-                else :
-                  result="blue"
-                  count_blue=count_blue+1
-                list_result.append(result)
-             flag=1
-             if "Purple" in list_result:
-              r=random.randint(1, 10)
-              flag=2
-              if r<8:
-               file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
-               await interaction.channel.send(file=file,silent=True)
-              else:
-               file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-               await interaction.channel.send(file=file,silent=True)
-             else:
-              file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-              await interaction.channel.send(file=file,silent=True)
-             await asyncio.sleep(0.2)
-             purple_list=message_sender.get_gacha_names()
-             gold_list=message_sender.get_gacha_names(r="★2",m="○")
-             blue_list=message_sender.get_gacha_names(r="★1",m="○")
-             for result in list_result:
-            
-              if result=="Purple":
-               r=random.randint(1,4)
-               if r<4:
-                await interaction.channel.send(random.choice(purple_list),silent=True)
-               else:
-                await interaction.channel.send(pickup,silent=True)  
-              elif result=="Gold":
-               await interaction.channel.send(random.choice(gold_list),silent=True)
-              else:
-               await interaction.channel.send(random.choice(blue_list),silent=True)
-              await asyncio.sleep(0.1) 
-            list_result=[]
-            for i in range(sin_n):
-                r=random.randint(1, 1000)
-                if r<31:
-                  result="Purple"
-                elif r<215:
-                  result="Gold"
-                else :
-                  result="blue"
-                list_result.append(result)
-                flag=1
-                if "Purple" in list_result:
-                 r=random.randint(1, 10)
-                 flag=2
-                 if r<8:
-                 
-                  file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
-                  await interaction.channel.send(file=file,silent=True)
-                 else:
-                  file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-                  await interaction.channel.send(file=file,silent=True)
-                else:
-                 file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
-                 await interaction.channel.send(file=file,silent=True)
-                await asyncio.sleep(0.2)
-                purple_list=message_sender.get_gacha_names()
-                gold_list=message_sender.get_gacha_names(r="★2",m="○")
-                blue_list=message_sender.get_gacha_names(r="★1",m="○")
-                for result in list_result:
-                 if result=="Purple":
-                  r=random.randint(1,4)
-                  if r<4:
-                   await interaction.channel.send(random.choice(purple_list),silent=True)
-                  else:
-                   await interaction.channel.send(pickup,silent=True) 
-                 elif result=="Gold":
-                  await interaction.channel.send(random.choice(gold_list),silent=True)
-                 else:
-                  await interaction.channel.send(random.choice(blue_list),silent=True)
-                await asyncio.sleep(0.1)   
-            # 確率の計算（0.031...を%表記にしたい場合は *100 すると分かりやすいです）
-            p_purple = count_purple / number
-            p_gold = count_gold / number
-            p_blue = count_blue / number
+                result_message = (
+                    f"🎲 {notation} の結果: {num_dice}個のダイス = **{total}**"
+                )
 
-# f-string を使った書き換え
-           await interaction.channel.send(f"ガチャ結果は☆3: {count_purple} (確率 {p_purple:.1%}) "
-                                          f"☆2: {count_gold} (確率 {p_gold:.1%}) "
-                                          f"☆1: {count_blue} (確率 {p_blue:.1%}) でした！")
+            await interaction.response.send_message(result_message)
+
+        @self.tree.command(name="gacha", description="ガチャシミュレータです")
+        @app_commands.describe(
+            number="回す回数の指定（例: 1,10 ）",
+            pickup="ピックアップしたいキャラ名です",
+        )
+        async def gacha_sim(
+            interaction: discord.Interaction, number: int, pickup: str = "ピックアップ"
+        ):
+
+            async with interaction.channel.typing():
+                count_purple = 0
+                count_gold = 0
+                count_blue = 0
+                import random
+
+                list_result = []
+                ten_n = int(number / 10)
+                sin_n = number % 10
+                for j in range(ten_n):
+                    list_result = []
+                    for i in range(10):
+                        r = random.randint(1, 1000)
+                        if r < 31:
+                            result = "Purple"
+                            count_purple = count_purple + 1
+                        elif r < 215:
+                            result = "Gold"
+                            count_gold = count_gold + 1
+                        else:
+                            result = "blue"
+                            count_blue = count_blue + 1
+                        list_result.append(result)
+                    flag = 1
+                    if "Purple" in list_result:
+                        r = random.randint(1, 10)
+                        flag = 2
+                        if r < 8:
+                            file = discord.File(
+                                "characters/AL_1S//assets/arisgatya2.jpg"
+                            )
+                            await interaction.channel.send(file=file, silent=True)
+                        else:
+                            file = discord.File(
+                                "characters/AL_1S//assets/arisgatya.jpg"
+                            )
+                            await interaction.channel.send(file=file, silent=True)
+                    else:
+                        file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                        await interaction.channel.send(file=file, silent=True)
+                    await asyncio.sleep(0.2)
+                    purple_list = message_sender.get_gacha_names()
+                    gold_list = message_sender.get_gacha_names(r="★2", m="○")
+                    blue_list = message_sender.get_gacha_names(r="★1", m="○")
+                    for result in list_result:
+
+                        if result == "Purple":
+                            r = random.randint(1, 4)
+                            if r < 4:
+                                await interaction.channel.send(
+                                    random.choice(purple_list), silent=True
+                                )
+                            else:
+                                await interaction.channel.send(pickup, silent=True)
+                        elif result == "Gold":
+                            await interaction.channel.send(
+                                random.choice(gold_list), silent=True
+                            )
+                        else:
+                            await interaction.channel.send(
+                                random.choice(blue_list), silent=True
+                            )
+                        await asyncio.sleep(0.1)
+                list_result = []
+                for i in range(sin_n):
+                    r = random.randint(1, 1000)
+                    if r < 31:
+                        result = "Purple"
+                    elif r < 215:
+                        result = "Gold"
+                    else:
+                        result = "blue"
+                    list_result.append(result)
+                    flag = 1
+                    if "Purple" in list_result:
+                        r = random.randint(1, 10)
+                        flag = 2
+                        if r < 8:
+
+                            file = discord.File(
+                                "characters/AL_1S//assets/arisgatya2.jpg"
+                            )
+                            await interaction.channel.send(file=file, silent=True)
+                        else:
+                            file = discord.File(
+                                "characters/AL_1S//assets/arisgatya.jpg"
+                            )
+                            await interaction.channel.send(file=file, silent=True)
+                    else:
+                        file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                        await interaction.channel.send(file=file, silent=True)
+                    await asyncio.sleep(0.2)
+                    purple_list = message_sender.get_gacha_names()
+                    gold_list = message_sender.get_gacha_names(r="★2", m="○")
+                    blue_list = message_sender.get_gacha_names(r="★1", m="○")
+                    for result in list_result:
+                        if result == "Purple":
+                            r = random.randint(1, 4)
+                            if r < 4:
+                                await interaction.channel.send(
+                                    random.choice(purple_list), silent=True
+                                )
+                            else:
+                                await interaction.channel.send(pickup, silent=True)
+                        elif result == "Gold":
+                            await interaction.channel.send(
+                                random.choice(gold_list), silent=True
+                            )
+                        else:
+                            await interaction.channel.send(
+                                random.choice(blue_list), silent=True
+                            )
+                    await asyncio.sleep(0.1)
+                # 確率の計算（0.031...を%表記にしたい場合は *100 すると分かりやすいです）
+                p_purple = count_purple / number
+                p_gold = count_gold / number
+                p_blue = count_blue / number
+
+            # f-string を使った書き換え
+            await interaction.channel.send(
+                f"ガチャ結果は☆3: {count_purple} (確率 {p_purple:.1%}) "
+                f"☆2: {count_gold} (確率 {p_gold:.1%}) "
+                f"☆1: {count_blue} (確率 {p_blue:.1%}) でした！"
+            )
+
         # birthday_set, birthday_check, birthday_ba, birthday_today はすべてアリス専用
         # 誕生日DBはアリスのみが管理するため、他のBotにはコマンド自体を登録しない
-        
-        print(f"[{self.display_name}] 誕生日コマンド登録開始 - character_name: {self.character_name}, lower: {self.character_name.lower()}")
-        
+
+        print(
+            f"[{self.display_name}] 誕生日コマンド登録開始 - character_name: {self.character_name}, lower: {self.character_name.lower()}"
+        )
+
         if self.character_name.lower() == "alice":
-            print(f"[{self.display_name}] アリス判定: True - birthday_set, birthday_check, birthday_ba を登録します")
+            print(
+                f"[{self.display_name}] アリス判定: True - birthday_set, birthday_check, birthday_ba を登録します"
+            )
+
             # /birthday set <月> <日> - 誕生日登録（アリスのみ）
-            @self.tree.command(name="birthday_set", description="あなたの誕生日を登録します")
+            @self.tree.command(
+                name="birthday_set", description="あなたの誕生日を登録します"
+            )
             @app_commands.describe(month="月（1〜12）", day="日（1〜31）")
             async def birthday_set(
                 interaction: discord.Interaction,
                 month: app_commands.Range[int, 1, 12],
-                day: app_commands.Range[int, 1, 31]
+                day: app_commands.Range[int, 1, 31],
             ):
                 # 存在しない日付のバリデーション（2000年はurl年なので 2/29 も有効）
                 try:
@@ -640,8 +742,8 @@ class CharacterBot:
                 except ValueError:
                     invalid_msg = getattr(
                         self.messages,
-                        'MSG_BIRTHDAY_INVALID_DATE',
-                        "その日付は存在しません。月と日の組み合わせを確認してください。"
+                        "MSG_BIRTHDAY_INVALID_DATE",
+                        "その日付は存在しません。月と日の組み合わせを確認してください。",
                     )
                     await interaction.response.send_message(invalid_msg, ephemeral=True)
                     return
@@ -653,65 +755,77 @@ class CharacterBot:
                     self.db_path,
                     user_id,
                     interaction.user.display_name,
-                    interaction.user.name
+                    interaction.user.name,
                 )
                 await asyncio.to_thread(
                     birthday_handler.set_user_birthday,
-                    self.db_path, user_id, month, day
+                    self.db_path,
+                    user_id,
+                    month,
+                    day,
                 )
                 msg = getattr(
                     self.messages,
-                    'MSG_BIRTHDAY_SET',
-                    f"🎂 {month}月{day}日を誕生日として登録しました！"
+                    "MSG_BIRTHDAY_SET",
+                    f"🎂 {month}月{day}日を誕生日として登録しました！",
                 )
                 await interaction.followup.send(msg, ephemeral=True)
 
             # /birthday_check - 全ユーザー誕生日確認（アリスのみ）
-            @self.tree.command(name="birthday_check", description="登録されている全ユーザーの誕生日を確認します")
+            @self.tree.command(
+                name="birthday_check",
+                description="登録されている全ユーザーの誕生日を確認します",
+            )
             async def birthday_check(interaction: discord.Interaction):
                 await interaction.response.defer(ephemeral=True)
-                
+
                 from datetime import datetime
+
                 today = datetime.now(JST)
                 today_str = f"{today.month:02d}-{today.day:02d}"
-                
+
                 all_birthdays = await asyncio.to_thread(
-                    birthday_handler.get_all_user_birthdays,
-                    self.db_path
+                    birthday_handler.get_all_user_birthdays, self.db_path
                 )
-                
+
                 if not all_birthdays:
                     msg = "🎂 誕生日が登録されているユーザーはいません。"
                 else:
                     lines = ["🎂 **登録されている誕生日一覧**\n"]
                     today_birthdays = []
-                    
+
                     for user_info in all_birthdays:
-                        m, d = user_info["birthday"].split('-')
-                        display_text = f"{user_info['display_name']}: {int(m)}月{int(d)}日"
-                        
+                        m, d = user_info["birthday"].split("-")
+                        display_text = (
+                            f"{user_info['display_name']}: {int(m)}月{int(d)}日"
+                        )
+
                         if user_info["birthday"] == today_str:
-                            today_birthdays.append(user_info['display_name'])
+                            today_birthdays.append(user_info["display_name"])
                             lines.append(f"🎉 **{display_text} ← 今日が誕生日！** 🎉")
                         else:
                             lines.append(f"• {display_text}")
-                    
+
                     if today_birthdays:
-                        lines.insert(1, f"\n✨ **今日が誕生日: {', '.join(today_birthdays)}** ✨\n")
-                    
+                        lines.insert(
+                            1,
+                            f"\n✨ **今日が誕生日: {', '.join(today_birthdays)}** ✨\n",
+                        )
+
                     msg = "\n".join(lines)
-                
+
                 await interaction.followup.send(msg, ephemeral=True)
-            
+
             # /birthday_ba <キャラ名> - ブルアカキャラ誕生日照会（アリスのみ）
-            @self.tree.command(name="birthday_ba", description="ブルアカキャラの誕生日を答えます")
+            @self.tree.command(
+                name="birthday_ba", description="ブルアカキャラの誕生日を答えます"
+            )
             @app_commands.describe(name="キャラクター名（信中名で可）")
-            async def birthday_ba(
-                interaction: discord.Interaction,
-                name: str
-            ):
+            async def birthday_ba(interaction: discord.Interaction, name: str):
                 await interaction.response.defer()
-                result = await asyncio.to_thread(character_handler.get_character_birthday, name)
+                result = await asyncio.to_thread(
+                    character_handler.get_character_birthday, name
+                )
                 if result:
                     msg = (
                         f"🎂 **{result['name']}** の誕生日は "
@@ -723,23 +837,30 @@ class CharacterBot:
                         f"キャラ名の表記を正確に入力するか、Google検索で確認してみてください。"
                     )
                 await interaction.followup.send(
-                    msg,
-                    allowed_mentions=discord.AllowedMentions.none()
+                    msg, allowed_mentions=discord.AllowedMentions.none()
                 )
+
             # /birthday_today - アリス専用（誕生日DBはアリスのみが管理するため）
             print(f"[{self.display_name}] birthday_today を登録します")
-            @self.tree.command(name="birthday_today", description="今日が誕生日のユーザーを手動でお祝いします")
+
+            @self.tree.command(
+                name="birthday_today",
+                description="今日が誕生日のユーザーを手動でお祝いします",
+            )
             async def birthday_today(interaction: discord.Interaction):
                 await interaction.response.defer(ephemeral=False)
-                print(f"[{self.display_name}] /birthday_today 実行: guild={interaction.guild_id}, channel={interaction.channel_id}")
+                print(
+                    f"[{self.display_name}] /birthday_today 実行: guild={interaction.guild_id}, channel={interaction.channel_id}"
+                )
 
                 user_birthdays = await asyncio.to_thread(
-                    birthday_handler.get_today_user_birthdays,
-                    self.db_path
+                    birthday_handler.get_today_user_birthdays, self.db_path
                 )
 
                 if not user_birthdays:
-                    await interaction.followup.send("🎂 今日が誕生日のユーザーはいません。")
+                    await interaction.followup.send(
+                        "🎂 今日が誕生日のユーザーはいません。"
+                    )
                     return
 
                 # チャンネルを特定（コマンドが実行されたチャンネルを優先）
@@ -763,7 +884,9 @@ class CharacterBot:
                             except discord.NotFound:
                                 member = None
                     mention = member.mention if member else f"<@{user_id}>"
-                    print(f"[{self.display_name}] 誕生日ユーザー: {display_name}, ID: {user_id}, mention={mention}")
+                    print(
+                        f"[{self.display_name}] 誕生日ユーザー: {display_name}, ID: {user_id}, mention={mention}"
+                    )
                     # Gemini APIでキャラクター風のメッセージを生成
                     msg = await self._generate_birthday_message_user(display_name)
                     celebrated.append(f"{mention} ({display_name})")
@@ -774,23 +897,30 @@ class CharacterBot:
                 full_message = header + "\n\n".join(birthday_messages)
                 await birthday_channel.send(
                     full_message,
-                    allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True, roles=False, everyone=False
+                    ),
                 )
 
                 # 実行者のみに見える簡易確認（処理完了通知）
                 await interaction.followup.send(
-                    f"✅ 誕生日のお祝いメッセージを送信しました",
-                    ephemeral=True
+                    f"✅ 誕生日のお祝いメッセージを送信しました", ephemeral=True
                 )
+
         else:
-            print(f"[{self.display_name}] アリス判定: False - birthday_set, birthday_check, birthday_ba, birthday_today をスキップします")
+            print(
+                f"[{self.display_name}] アリス判定: False - birthday_set, birthday_check, birthday_ba, birthday_today をスキップします"
+            )
 
         # ブルアカキャラクターデータベースコマンド（アリス専用）
         if self.character_name.lower() == "alice":
             print(f"[{self.display_name}] データベースコマンド登録開始 - アリス専用")
-            
+
             # /db_search - キャラ検索
-            @self.tree.command(name="db_search", description="ブルーアーカイブのキャラクターを検索します")
+            @self.tree.command(
+                name="db_search",
+                description="ブルーアーカイブのキャラクターを検索します",
+            )
             @app_commands.describe(name="キャラクター名（部分一致）")
             async def db_search(interaction: discord.Interaction, name: str):
                 await interaction.response.defer()
@@ -798,7 +928,11 @@ class CharacterBot:
                 if chars:
                     lines = [f"=== 検索: {name} ==="]
                     for char in chars:
-                        birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                        birthday = (
+                            f"{char['birthday_month']}月{char['birthday_day']}日"
+                            if char["birthday_month"]
+                            else "不明"
+                        )
                         lines.append(f"\n【{char['name']}】")
                         lines.append(f"  レアリティ: ★ {char['rarity']}")
                         lines.append(f"  学校: {char['school_jp']}")
@@ -812,64 +946,98 @@ class CharacterBot:
                 await interaction.followup.send(msg)
 
             # /db_school - 学校別一覧
-            @self.tree.command(name="db_school", description="学校のキャラクター一覧を表示します")
+            @self.tree.command(
+                name="db_school", description="学校のキャラクター一覧を表示します"
+            )
             @app_commands.describe(school="学校名（日本語または英語）")
             async def db_school(interaction: discord.Interaction, school: str):
                 await interaction.response.defer()
-                characters = await asyncio.to_thread(character_handler.get_characters_by_school, school)
+                characters = await asyncio.to_thread(
+                    character_handler.get_characters_by_school, school
+                )
                 if not characters:
-                    await interaction.followup.send(f"「{school}」に該当する学校は見つかりませんでした。")
+                    await interaction.followup.send(
+                        f"「{school}」に該当する学校は見つかりませんでした。"
+                    )
                     return
-                
-                school_name = characters[0]['school_jp']
-                school_code = characters[0]['school']
+
+                school_name = characters[0]["school_jp"]
+                school_code = characters[0]["school"]
                 lines = [f"=== 学校: {school_name} ({school_code}) ==="]
                 lines.append(f"合計: {len(characters)}人")
                 for char in characters:
-                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                    birthday = (
+                        f"{char['birthday_month']}月{char['birthday_day']}日"
+                        if char["birthday_month"]
+                        else "不明"
+                    )
                     lines.append(f"  {char['name']:<12} ★{char['rarity']}   {birthday}")
-                
+
                 await interaction.followup.send("\n".join(lines))
 
             # /db_rarity - レアリティ別一覧
-            @self.tree.command(name="db_rarity", description="レアリティ別のキャラクター一覧を表示します")
+            @self.tree.command(
+                name="db_rarity",
+                description="レアリティ別のキャラクター一覧を表示します",
+            )
             @app_commands.describe(rarity="レアリティ（1〜3）")
-            async def db_rarity(interaction: discord.Interaction, rarity: app_commands.Range[int, 1, 3]):
+            async def db_rarity(
+                interaction: discord.Interaction, rarity: app_commands.Range[int, 1, 3]
+            ):
                 await interaction.response.defer()
-                all_chars = await asyncio.to_thread(character_handler.get_all_characters)
-                characters = [c for c in all_chars if c['rarity'] == rarity]
-                
+                all_chars = await asyncio.to_thread(
+                    character_handler.get_all_characters
+                )
+                characters = [c for c in all_chars if c["rarity"] == rarity]
+
                 if not characters:
-                    await interaction.followup.send(f"★{rarity}のキャラクターは見つかりませんでした。")
+                    await interaction.followup.send(
+                        f"★{rarity}のキャラクターは見つかりませんでした。"
+                    )
                     return
-                
+
                 lines = [f"=== レアリティ★{rarity} ==="]
                 lines.append(f"合計: {len(characters)}人")
                 for char in characters:
-                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
-                    lines.append(f"  {char['name']:<12} {char['school_jp']:<15} {birthday}")
-                
+                    birthday = (
+                        f"{char['birthday_month']}月{char['birthday_day']}日"
+                        if char["birthday_month"]
+                        else "不明"
+                    )
+                    lines.append(
+                        f"  {char['name']:<12} {char['school_jp']:<15} {birthday}"
+                    )
+
                 await interaction.followup.send("\n".join(lines))
 
             # /db_today - 今日の誕生日
-            @self.tree.command(name="db_today", description="今日が誕生日のブルアカキャラクターを表示します")
+            @self.tree.command(
+                name="db_today",
+                description="今日が誕生日のブルアカキャラクターを表示します",
+            )
             async def db_today(interaction: discord.Interaction):
                 await interaction.response.defer()
                 today = datetime.now(JST)
-                characters = await asyncio.to_thread(character_handler.get_today_character_birthdays)
-                
+                characters = await asyncio.to_thread(
+                    character_handler.get_today_character_birthdays
+                )
+
                 if not characters:
-                    await interaction.followup.send(f"今日({today.month}月{today.day}日)は誕生日であるブルアカキャラはいません。")
+                    await interaction.followup.send(
+                        f"今日({today.month}月{today.day}日)は誕生日であるブルアカキャラはいません。"
+                    )
                     return
-                
+
                 lines = [f"=== 今日({today.month}月{today.day}日)の誕生日 ==="]
                 for char in characters:
                     lines.append(f"  {char['name']}: {char['month']}月{char['day']}日")
-                
+
                 await interaction.followup.send("\n".join(lines))
 
             # /db_help - ヘルプ
-            @self.tree.command(name="db_help", description="データベースコマンドの一覧を表示します")
+            @self.tree.command(
+                name="db_help", description="データベースコマンドの一覧を表示します"
+            )
             async def db_help(interaction: discord.Interaction):
                 await interaction.response.defer()
                 msg = """📖 **ブルーアーカイブ データベース コマンド一覧**
@@ -886,62 +1054,70 @@ class CharacterBot:
 - `/db_rarity 3`
 """
                 await interaction.followup.send(msg)
+
         else:
-            print(f"[{self.display_name}] データベースコマンド登録スキップ - アリス以外")
+            print(
+                f"[{self.display_name}] データベースコマンド登録スキップ - アリス以外"
+            )
 
         self.client.run(self.discord_token)
 
-
-    async def _run_timer_with_countdown(self, channel, message, total_seconds: int, task: str, timer_data: dict):
+    async def _run_timer_with_countdown(
+        self, channel, message, total_seconds: int, task: str, timer_data: dict
+    ):
         """バックグラウンドでタイマーを実行（カウントダウン表示付き）"""
         end_time = time.time() + total_seconds
-        
+
         try:
             # カウントダウン更新間隔（秒）
             # 残り時間に応じて更新頻度を調整
             while True:
                 remaining = end_time - time.time()
-                
+
                 if remaining <= 0:
                     break
-                
+
                 # 残り時間に応じて更新間隔を調整
                 if remaining > 60:
                     update_interval = 10  # 1分以上: 10秒ごと
                 elif remaining > 10:
-                    update_interval = 5   # 10秒〜1分: 5秒ごと
+                    update_interval = 5  # 10秒〜1分: 5秒ごと
                 else:
-                    update_interval = 1   # 10秒以下: 1秒ごと
-                
+                    update_interval = 1  # 10秒以下: 1秒ごと
+
                 # 残り時間を計算
                 mins = int(remaining // 60)
                 secs = int(remaining % 60)
-                
+
                 if mins > 0:
                     time_display = f"{mins}分{secs}秒"
                 else:
                     time_display = f"{secs}秒"
-                
+
                 # メッセージを編集して残り時間を更新
                 try:
                     progress_bar = self._create_progress_bar(total_seconds, remaining)
-                    await message.edit(content=f"⏰ **{task}** のタイマー\n{progress_bar} 残り: {time_display}")
+                    await message.edit(
+                        content=f"⏰ **{task}** のタイマー\n{progress_bar} 残り: {time_display}"
+                    )
                 except Exception as e:
                     print(f"[{self.display_name}] Timer message edit error: {e}")
-                
+
                 # 次の更新まで待機
                 await asyncio.sleep(min(update_interval, remaining))
-            
+
             # タイマー終了
             await message.edit(content=f"✅ **{task}** のタイマーが終了しました！")
             await channel.send(self.messages.MSG_TIMER_FINISH.format(task_name=task))
-            
+
         finally:
             # タイマー一覧から削除
             channel_id = channel.id
             if channel_id in self.active_timers:
-                self.active_timers[channel_id] = [t for t in self.active_timers[channel_id] if t != timer_data]
-    
+                self.active_timers[channel_id] = [
+                    t for t in self.active_timers[channel_id] if t != timer_data
+                ]
+
     def _create_progress_bar(self, total_seconds: int, remaining_seconds: float) -> str:
         """プログレスバーを作成"""
         progress = 1 - (remaining_seconds / total_seconds)
@@ -953,26 +1129,32 @@ class CharacterBot:
 
     async def _fetch_db_history(self, channel_id: int, limit: int) -> list:
         """DBから履歴を取得（並列処理用）"""
-        return await asyncio.to_thread(db_handler.get_recent_history, self.db_path, channel_id, limit)
+        return await asyncio.to_thread(
+            db_handler.get_recent_history, self.db_path, channel_id, limit
+        )
 
-    async def _fetch_discord_history(self, channel, limit: int, is_empty_mention: bool) -> list:
+    async def _fetch_discord_history(
+        self, channel, limit: int, is_empty_mention: bool
+    ) -> list:
         """Discordから履歴を取得（並列処理用）"""
         return await message_sender.fetch_discord_history(
             channel,
             limit=limit,
             bot_id=self.client.user.id,
-            max_chars=DISCORD_HISTORY_MAX_CHARS
+            max_chars=DISCORD_HISTORY_MAX_CHARS,
         )
 
     async def _fetch_memories(self, channel_id: int) -> str:
         """記憶を取得（並列処理用）"""
-        return await asyncio.to_thread(db_handler.get_memories, self.db_path, channel_id)
+        return await asyncio.to_thread(
+            db_handler.get_memories, self.db_path, channel_id
+        )
 
     async def _fetch_user_info(self, author) -> dict:
         """ユーザー情報を取得（並列処理用）"""
         user_display_name = author.display_name
         user_account_name = author.name
-        user_mention = f'<@{author.id}>'
+        user_mention = f"<@{author.id}>"
 
         user_info = (
             f"\n\n[Current User]\n"
@@ -982,55 +1164,63 @@ class CharacterBot:
             f"# ユーザーをメンションする場合は上記の Mention 文字列をそのまま使用すること"
         )
 
-        known_users_info = await asyncio.to_thread(db_handler.get_all_users_info, self.db_path)
+        known_users_info = await asyncio.to_thread(
+            db_handler.get_all_users_info, self.db_path
+        )
 
-        return {
-            "user_info": user_info,
-            "known_users_info": known_users_info
-        }
+        return {"user_info": user_info, "known_users_info": known_users_info}
 
     async def _fetch_japan_time(self) -> str:
         """日本時間を取得（並列処理用）"""
         return timer_handler.get_japan_time()
 
-    async def _handle_message(self, message: discord.Message, force_process: bool = False,
-                              interaction: discord.Interaction = None,target_channel: discord.Thread = None ) -> None:
+    async def _handle_message(
+        self,
+        message: discord.Message,
+        force_process: bool = False,
+        interaction: discord.Interaction = None,
+        target_channel: discord.Thread = None,
+    ) -> None:
         """メッセージハンドラ（メインロジック）"""
         # 自分自身のメッセージは無視
         if message.author == self.client.user:
             return
-        
+
         # メッセージIDによる重複チェック
         message_id = message.id
         current_time = time.time()
-        
+
         # 古いメッセージIDをクリーンアップ（5分経過したもの）
         self._cleanup_old_message_ids(current_time)
-        
+
         # 既に処理済みのメッセージは無視
         if message_id in self._processed_message_ids:
             print(f"[{self.display_name}] Duplicate message ignored: ID={message_id}")
             return
-        
+
         # このメッセージの処理ロックを取得
         if message_id not in self._message_locks:
             self._message_locks[message_id] = asyncio.Lock()
-        
+
         # ロックを取得して重複処理を防止
         async with self._message_locks[message_id]:
             # 二重チェック（ロック取得後に再確認）
             if message_id in self._processed_message_ids:
-                print(f"[{self.display_name}] Duplicate message ignored (after lock): ID={message_id}")
+                print(
+                    f"[{self.display_name}] Duplicate message ignored (after lock): ID={message_id}"
+                )
                 return
-            
+
             # 処理済みとしてマーク
             self._processed_message_ids.add(message_id)
             self._message_id_timestamps[message_id] = current_time
-            print(f"[{self.display_name}] Processing message: ID={message_id}, Content='{message.content[:50]}...'")
-        
+            print(
+                f"[{self.display_name}] Processing message: ID={message_id}, Content='{message.content[:50]}...'"
+            )
+
         current_channel_id = message.channel.id
         channel_id = current_channel_id
-        
+
         # 履歴消去コマンド
         if message.content == self.history_clear_command:
             if db_handler.clear_db_history(self.db_path, channel_id):
@@ -1038,29 +1228,29 @@ class CharacterBot:
             else:
                 await message.channel.send(self.messages.MSG_HISTORY_CLEAR_FAILED)
             return
-        
+
         # タイマー関連メッセージの案内
         if self._is_timer_related(message.content):
             await message.channel.send(self.messages.MSG_TIMER_GUIDE)
             return
-        
+
         # 特殊コマンドの処理
         for cmd, cmd_config in self.special_commands.items():
             if message.content.startswith(cmd):
-                if 'message' in cmd_config:
-                    await message.channel.send(cmd_config['message'])
-                if 'file' in cmd_config:
-                    await message.channel.send(file=discord.File(cmd_config['file']))
+                if "message" in cmd_config:
+                    await message.channel.send(cmd_config["message"])
+                if "file" in cmd_config:
+                    await message.channel.send(file=discord.File(cmd_config["file"]))
                 return
-        
+
         # メンションまたはコマンドパターンのチェック
         command_match = self.command_pattern.match(message.content)
-        
+
         if self.client.user.mentioned_in(message) or command_match or force_process:
             # パフォーマンスタイマーの初期化
             timer = PerformanceTimer(self.display_name)
             timer.start_total()
-            
+
             # ユーザー情報をDBに自動登録（upsert）
             with timer.measure_step("ユーザー情報登録"):
                 await asyncio.to_thread(
@@ -1068,39 +1258,45 @@ class CharacterBot:
                     self.db_path,
                     message.author.id,
                     message.author.display_name,
-                    message.author.name
+                    message.author.name,
                 )
 
             # プロンプトの抽出
             if self.client.user.mentioned_in(message):
-             prompt = message.content.replace(f'<@{self.client.user.id}>', '').replace(f'<@!{self.client.user.id}>', '').strip()
+                prompt = (
+                    message.content.replace(f"<@{self.client.user.id}>", "")
+                    .replace(f"<@!{self.client.user.id}>", "")
+                    .strip()
+                )
             elif command_match:
-             prompt = message.content[command_match.end():].strip()
+                prompt = message.content[command_match.end() :].strip()
             else:
-             # 右クリック（force_process）時は、メッセージ全文をプロンプトにする
-             prompt = message.content
+                # 右クリック（force_process）時は、メッセージ全文をプロンプトにする
+                prompt = message.content
             # チャンネルメンションの処理
             if message.channel_mentions:
                 channel_id = message.channel_mentions[0].id
-                prompt = prompt.replace(f'<#{channel_id}>', '')
-            
+                prompt = prompt.replace(f"<#{channel_id}>", "")
+
             # プロンプトなしのメンションかどうか判定（@Bot のみ）
             is_empty_mention = self.client.user.mentioned_in(message) and not prompt
-            
+
             # 要約タスクのリセット
             if channel_id in self.summary_tasks:
                 self.summary_tasks[channel_id].cancel()
             self.summary_tasks[channel_id] = asyncio.create_task(
                 db_handler.summarize_and_cleanup(self.db_path, channel_id)
             )
-            
+
             # 添付ファイルの処理（空メンション時は通常より多く読み込む）
             with timer.measure_step("添付ファイル処理"):
                 file_parts = []
                 if message.attachments:
                     max_attachments = 10 if is_empty_mention else 5
-                    file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
-            
+                    file_parts = await file_handler.process_attachments(
+                        message.attachments[:max_attachments]
+                    )
+
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
             url_context = ""
             if prompt:
@@ -1108,20 +1304,27 @@ class CharacterBot:
                     url_contents = await url_handler.process_urls_in_text(prompt)
                     if url_contents:
                         url_context = url_handler.format_url_contents(url_contents)
-            
+
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
                     await self._process_gemini_request(
-                        message, channel_id, current_channel_id, prompt, file_parts, 
-                        is_empty_mention, url_context, timer, interaction=interaction, 
-                        target_channel=target_channel
+                        message,
+                        channel_id,
+                        current_channel_id,
+                        prompt,
+                        file_parts,
+                        is_empty_mention,
+                        url_context,
+                        timer,
+                        interaction=interaction,
+                        target_channel=target_channel,
                     )
             else:
                 timer.print_summary()
             return
-    
+
     async def _process_gemini_request(
         self,
         message: discord.Message,
@@ -1133,64 +1336,73 @@ class CharacterBot:
         url_context: str = "",
         timer: PerformanceTimer = None,
         interaction: discord.Interaction = None,
-        target_channel: discord.Thread = None
+        target_channel: discord.Thread = None,
     ) -> None:
         """Gemini APIへのリクエストを処理（改善版計測）"""
-        
+
         if timer is None:
             timer = PerformanceTimer(self.display_name)
             timer.start_total()
-        
+
         # 履歴取得数の設定（空メンション時は拡張）
         db_history_limit = 15 if is_empty_mention else 6
         discord_history_limit = 20 if is_empty_mention else DISCORD_HISTORY_LIMIT
-        
+
         # 推論レベルと検索要否の判定
         with timer.measure_step("推論レベル判定"):
+
             def get_history_func(ch_id, limit):
                 return db_handler.get_recent_history(self.db_path, ch_id, limit)
-            
+
             judgment = await gemini_handler.determine_level_and_search(
                 prompt=prompt if prompt else "",
                 channel_id=channel_id,
                 has_attachments=bool(file_parts),
                 get_recent_history_func=get_history_func,
-                character_name=self.display_name
+                character_name=self.display_name,
             )
-        
-        thinking_level = judgment['level']
-        needs_search = judgment['search']
-        timer_minutes = judgment['minutes']
-        timer_name = judgment['task']
-        needs_history = judgment['reference']
 
-        prompt_display = '(empty mention)' if is_empty_mention else (prompt[:50] if prompt else '(file only)')
-        print(f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, History: {needs_history}, Prompt: {prompt_display}...")
-        
+        thinking_level = judgment["level"]
+        needs_search = judgment["search"]
+        timer_minutes = judgment["minutes"]
+        timer_name = judgment["task"]
+        needs_history = judgment["reference"]
+
+        prompt_display = (
+            "(empty mention)"
+            if is_empty_mention
+            else (prompt[:50] if prompt else "(file only)")
+        )
+        print(
+            f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, History: {needs_history}, Prompt: {prompt_display}..."
+        )
+
         try:
             # 推論レベルが高い場合、思考中メッセージを送信
-            if thinking_level == 'high':
+            if thinking_level == "high":
                 if not interaction:
                     await message.channel.send(self.messages.MSG_THINKING)
-            
+
             # 検索が必要な場合
             tools = []
             if needs_search:
                 if not interaction:
                     await message.channel.send(self.messages.MSG_SEARCHING)
                 tools.append(types.Tool(google_search=types.GoogleSearch()))
-            
+
             # タイマーの設定
             if timer_minutes != 0:
                 t_name = str(timer_name) if timer_name else "Timer"
-                asyncio.create_task(timer_handler.set_timer(
-                    message.channel,
-                    timer_minutes,
-                    t_name,
-                    finish_message_template=self.messages.MSG_TIMER_FINISH,
-                    timers_dict=self.active_timers
-                ))
-            
+                asyncio.create_task(
+                    timer_handler.set_timer(
+                        message.channel,
+                        timer_minutes,
+                        t_name,
+                        finish_message_template=self.messages.MSG_TIMER_FINISH,
+                        timers_dict=self.active_timers,
+                    )
+                )
+
             # コンテンツの構築
             current_parts = []
             syslog = ""
@@ -1200,13 +1412,18 @@ class CharacterBot:
             if prompt:
                 current_parts.append({"text": prompt + syslog})
             elif is_empty_mention:
-                current_parts.append({"text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog})
+                current_parts.append(
+                    {
+                        "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
+                        + syslog
+                    }
+                )
             if file_parts:
                 current_parts.extend(file_parts)
 
             # 並列処理開始
             parallel_timing = timer.measure_parallel_start("並列データ取得")
-            
+
             async_tasks = []
             if needs_history:
                 async_tasks.append(self._fetch_db_history(channel_id, db_history_limit))
@@ -1214,7 +1431,11 @@ class CharacterBot:
                 async_tasks.append(None)
 
             if ENABLE_DISCORD_HISTORY and needs_history:
-                async_tasks.append(self._fetch_discord_history(message.channel, discord_history_limit, is_empty_mention))
+                async_tasks.append(
+                    self._fetch_discord_history(
+                        message.channel, discord_history_limit, is_empty_mention
+                    )
+                )
             else:
                 async_tasks.append(None)
 
@@ -1225,7 +1446,7 @@ class CharacterBot:
 
             valid_tasks = [t for t in async_tasks if t is not None]
             results = await asyncio.gather(*valid_tasks, return_exceptions=True)
-            
+
             timer.measure_parallel_end(parallel_timing)
 
             # 結果を展開
@@ -1235,7 +1456,9 @@ class CharacterBot:
                 db_history_result = results[result_idx]
                 result_idx += 1
                 if isinstance(db_history_result, Exception):
-                    print(f"[{self.display_name}] [PARALLEL] DB履歴取得エラー: {db_history_result}")
+                    print(
+                        f"[{self.display_name}] [PARALLEL] DB履歴取得エラー: {db_history_result}"
+                    )
                     history = []
                 else:
                     history = db_history_result
@@ -1245,12 +1468,20 @@ class CharacterBot:
                 discord_history_result = results[result_idx]
                 result_idx += 1
                 if isinstance(discord_history_result, Exception):
-                    print(f"[{self.display_name}] [PARALLEL] Discord履歴取得エラー: {discord_history_result}")
+                    print(
+                        f"[{self.display_name}] [PARALLEL] Discord履歴取得エラー: {discord_history_result}"
+                    )
                 else:
                     discord_history = discord_history_result
                     if discord_history:
-                        max_total = discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
-                        history = message_sender.merge_histories(discord_history, history, max_total=max_total)
+                        max_total = (
+                            discord_history_limit
+                            if is_empty_mention
+                            else DISCORD_HISTORY_LIMIT
+                        )
+                        history = message_sender.merge_histories(
+                            discord_history, history, max_total=max_total
+                        )
 
             memories_result = results[result_idx]
             result_idx += 1
@@ -1259,10 +1490,12 @@ class CharacterBot:
             user_info_result = results[result_idx]
             result_idx += 1
             if isinstance(user_info_result, Exception):
-                print(f"[{self.display_name}] [PARALLEL] ユーザー情報取得エラー: {user_info_result}")
+                print(
+                    f"[{self.display_name}] [PARALLEL] ユーザー情報取得エラー: {user_info_result}"
+                )
                 user_display_name = author.display_name
                 user_account_name = author.name
-                user_mention = f'<@{author.id}>'
+                user_mention = f"<@{author.id}>"
                 user_info = (
                     f"\n\n[Current User]\n"
                     f"Display Name: {user_display_name}\n"
@@ -1286,80 +1519,99 @@ class CharacterBot:
                 if history:
                     history_texts: List[str] = []
                     for history_item in history[-8:]:
-                        for part in history_item.get('parts', []):
-                            text = part.get('text') if isinstance(part, dict) else None
+                        for part in history_item.get("parts", []):
+                            text = part.get("text") if isinstance(part, dict) else None
                             if text:
                                 history_texts.append(text)
 
                     if history_texts:
                         combined_history_text = "\n".join(history_texts)
-                        history_url_contents = await url_handler.process_urls_in_text(combined_history_text)
+                        history_url_contents = await url_handler.process_urls_in_text(
+                            combined_history_text
+                        )
                         if history_url_contents:
-                            history_url_context = url_handler.format_url_contents(history_url_contents)
+                            history_url_context = url_handler.format_url_contents(
+                                history_url_contents
+                            )
 
             if url_context or history_url_context:
                 url_parts_text = url_context + history_url_context
                 if prompt:
                     current_parts[0]["text"] = prompt + syslog + url_parts_text
                 elif is_empty_mention:
-                    current_parts[0]["text"] = "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)" + syslog + url_parts_text
+                    current_parts[0]["text"] = (
+                        "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
+                        + syslog
+                        + url_parts_text
+                    )
 
-            input_contents = history + [{
-                "role": "user",
-                "parts": current_parts
-            }]
+            input_contents = history + [{"role": "user", "parts": current_parts}]
             known_users_section = f"\n\n{known_users_info}" if known_users_info else ""
 
             enhanced_instruction = f"{self.system_instruction}{user_info}{known_users_section}\n\n[Current Japan Time]\n{current_jst}"
 
             if tools:
                 full_system_instruction = (
-                    enhanced_instruction + 
-                    "\n\n[IMPORTANT] Please use Google Search for latest information." +
-                    "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: " + 
-                    memories
+                    enhanced_instruction
+                    + "\n\n[IMPORTANT] Please use Google Search for latest information."
+                    + "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: "
+                    + memories
                 )
             else:
                 full_system_instruction = (
-                    enhanced_instruction +
-                    "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: " +
-                    memories
+                    enhanced_instruction
+                    + "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: "
+                    + memories
                 )
-            
+
             current_config = types.GenerateContentConfig(
                 system_instruction=full_system_instruction,
                 tools=tools,
-                thinking_config=types.ThinkingConfig(thinking_level=thinking_level)
+                thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
             )
-            
+
             # Gemini API呼び出し
             with timer.measure_step("Gemini API呼び出し"):
                 response = await gemini_handler.generate_content_with_fallback(
                     client=gemini_client,
-                    primary_model='gemini-3-flash-preview',
+                    primary_model="gemini-3-flash-preview",
                     contents=input_contents,
-                    config=current_config
+                    config=current_config,
                 )
-            
+
             # レスポンス抽出
             with timer.measure_step("レスポンス抽出"):
                 bot_response_text = await self._extract_response_text(
                     response, input_contents, full_system_instruction, tools
                 )
-            
+
             # 履歴保存
             with timer.measure_step("DB保存"):
                 if file_parts:
-                    file_summary = await file_handler.summarize_attachments(prompt, file_parts)
+                    file_summary = await file_handler.summarize_attachments(
+                        prompt, file_parts
+                    )
                     save_user_text = f"{prompt}{file_summary}"
                 else:
                     save_user_text = prompt
 
-                await asyncio.to_thread(db_handler.save_message, self.db_path, current_channel_id, 'user', save_user_text)
-                await asyncio.to_thread(db_handler.save_message, self.db_path, current_channel_id, 'model', bot_response_text)
-            
+                await asyncio.to_thread(
+                    db_handler.save_message,
+                    self.db_path,
+                    current_channel_id,
+                    "user",
+                    save_user_text,
+                )
+                await asyncio.to_thread(
+                    db_handler.save_message,
+                    self.db_path,
+                    current_channel_id,
+                    "model",
+                    bot_response_text,
+                )
+
             print(f"[{self.display_name}] DB saved: {save_user_text}")
-            
+
             if self._contains_partner_mention(bot_response_text):
                 print(f"[{self.display_name}] Partner mention detected in response")
             dest = target_channel if target_channel else message.channel
@@ -1372,106 +1624,120 @@ class CharacterBot:
                     await message_sender.send_long_message(
                         dest,
                         bot_response_text,
-                        long_message_notice=self.messages.MSG_RESPONSE_TOO_LONG
+                        long_message_notice=self.messages.MSG_RESPONSE_TOO_LONG,
                     )
-            
+
             # サマリー出力
             timer.print_summary()
-            
+
         except Exception as e:
             print(f"[{self.display_name}] Error: {e}")
             error_msg = self.messages.ERR_REBOOT.format(error_detail=e)
             await message.channel.send(error_msg)
-    
+
     async def _extract_response_text(
-        self,
-        response,
-        input_contents: list,
-        full_system_instruction: str,
-        tools: list
+        self, response, input_contents: list, full_system_instruction: str, tools: list
     ) -> str:
         """レスポンスからテキストを安全に抽出"""
-        
+
         bot_response_text = None
-        
+
         try:
             # 方法1: response.text を直接取得
-            if response and hasattr(response, 'text') and response.text:
+            if response and hasattr(response, "text") and response.text:
                 bot_response_text = response.text
-            
+
             # 方法2: candidates.content.parts から取得
-            if not bot_response_text and response and hasattr(response, 'candidates') and response.candidates:
+            if (
+                not bot_response_text
+                and response
+                and hasattr(response, "candidates")
+                and response.candidates
+            ):
                 first_candidate = response.candidates[0]
-                if hasattr(first_candidate, 'content') and first_candidate.content:
-                    if hasattr(first_candidate.content, 'parts') and first_candidate.content.parts:
+                if hasattr(first_candidate, "content") and first_candidate.content:
+                    if (
+                        hasattr(first_candidate.content, "parts")
+                        and first_candidate.content.parts
+                    ):
                         parts_text = []
                         for part in first_candidate.content.parts:
-                            if hasattr(part, 'text') and part.text:
+                            if hasattr(part, "text") and part.text:
                                 parts_text.append(part.text)
                         if parts_text:
-                            bot_response_text = ''.join(parts_text)
-            
+                            bot_response_text = "".join(parts_text)
+
             # 空レスポンス時のリトライ
             if not bot_response_text:
                 print(f"[{self.display_name}] Empty, retrying...")
                 retry_config = types.GenerateContentConfig(
                     system_instruction=full_system_instruction,
                     tools=tools,
-                    thinking_config=types.ThinkingConfig(thinking_level='minimal')
+                    thinking_config=types.ThinkingConfig(thinking_level="minimal"),
                 )
                 retry_response = await gemini_handler.generate_content_with_fallback(
                     client=gemini_client,
-                    primary_model='gemini-3-flash-preview',
+                    primary_model="gemini-3-flash-preview",
                     contents=input_contents,
-                    config=retry_config
+                    config=retry_config,
                 )
-                if retry_response and hasattr(retry_response, 'text') and retry_response.text:
+                if (
+                    retry_response
+                    and hasattr(retry_response, "text")
+                    and retry_response.text
+                ):
                     bot_response_text = retry_response.text
                 else:
                     print(f"[{self.display_name}] Retry failed")
-            
+
             if not bot_response_text:
                 print(f"[{self.display_name}] Extract failed")
                 bot_response_text = self.messages.RESPONSE_FAILED
-                
+
         except Exception as extract_error:
-            print(f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}")
+            print(
+                f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}"
+            )
             bot_response_text = self.messages.RESPONSE_FAILED
-        
+
         return bot_response_text
 
     def _contains_partner_mention(self, text: str) -> bool:
         """応答に相方Botへのメンションが含まれるかチェック"""
-        partner_id = getattr(self.messages, 'PARTNER_BOT_ID', None)
+        partner_id = getattr(self.messages, "PARTNER_BOT_ID", None)
         if not partner_id:
             return False
-        return f'<@{partner_id}>' in text or f'<@!{partner_id}>' in text
+        return f"<@{partner_id}>" in text or f"<@!{partner_id}>" in text
 
     async def get_or_create_report_channel(self, guild, channel_name="wiki-更新通知"):
         """レポート用チャンネルを取得または作成"""
         channel = discord.utils.get(guild.text_channels, name=channel_name)
-    
+
         if channel is None:
             try:
                 overwrites = {
-                    guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-                    guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    guild.default_role: discord.PermissionOverwrite(
+                        read_messages=True, send_messages=False
+                    ),
+                    guild.me: discord.PermissionOverwrite(
+                        read_messages=True, send_messages=True
+                    ),
                 }
-            
+
                 channel = await guild.create_text_channel(
                     name=channel_name,
                     topic="ブルーアーカイブWikiの更新を自動でお知らせします（自動生成）",
-                    overwrites=overwrites
+                    overwrites=overwrites,
                 )
                 print(f"新しくチャンネルを作成しました: {channel_name}")
-            
+
             except discord.Forbidden:
                 print("エラー: チャンネルを作成する権限がありません。")
                 return None
             except Exception as e:
                 print(f"チャンネル作成中にエラーが発生しました: {e}")
                 return None
-    
+
         return channel
 
     async def report_wiki_news(self, target, result, is_manual=False):
@@ -1486,10 +1752,12 @@ class CharacterBot:
         is_new = result["is_new"]
 
         if is_new:
-            msg = self.messages.WIKI_NEW_EVENT.format(title=result["title"], link=result["url"])
+            msg = self.messages.WIKI_NEW_EVENT.format(
+                title=result["title"], link=result["url"]
+            )
             await target.send(msg)
         elif is_manual:
-            msg = self.messages.WIKI_ALREADY_READ.format(title=result["title"], link=result["url"])
+            msg = self.messages.WIKI_ALREADY_READ.format(
+                title=result["title"], link=result["url"]
+            )
             await target.send(msg)
-       
-
