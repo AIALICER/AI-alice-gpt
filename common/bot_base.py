@@ -179,7 +179,7 @@ class CharacterBot:
         self.db_path = get_db_path(character_name)
         init_database(self.db_path)
         # ブルアカ誕生日専用DBの初期化（全Bot共有）
-        birthday_handler.init_birthday_db()
+        character_handler.init_birthday_db()
         
         # 全BotのIDセット（誕生日お祝い時のメンション除外用）
         from characters.bot_id_list import BOT_REGISTRY
@@ -238,7 +238,7 @@ class CharacterBot:
         # ========== ブルアカキャラ誕生日の更新（月曜日のみ） ==========
         if is_alice and today.weekday() == 0:  # 月曜日
             try:
-                count = await birthday_handler.async_scrape_and_update()
+                count = await character_handler.async_scrape_and_update()
                 print(f"[{self.display_name}] ブルアカ誕生日DB更新: {count}件")
             except Exception as e:
                 print(f"[{self.display_name}] ブルアカ誕生日スクレイピングエラー: {e}")
@@ -248,7 +248,7 @@ class CharacterBot:
             try:
                 ba_channel = self.client.get_channel(BLUEARCHIVE_BIRTHDAY_CHANNEL_ID)
                 if ba_channel:
-                    ba_birthdays = await asyncio.to_thread(birthday_handler.get_today_character_birthdays)
+                    ba_birthdays = await asyncio.to_thread(character_handler.get_today_character_birthdays)
                     if ba_birthdays:
                         names = "、".join(c["name"] for c in ba_birthdays)
                         msg = await self._generate_birthday_message_ba(names)
@@ -387,6 +387,10 @@ class CharacterBot:
         """Botを起動"""
         print(f"[{self.display_name}] Starting bot...")
         
+        # ギルド固有コマンド用サーバーID
+        TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "751791380837171340")
+        target_guild_id = int(TARGET_GUILD_ID) if TARGET_GUILD_ID else None
+        
         @self.client.event
         async def on_ready():
             """Bot準備完了時の処理"""
@@ -395,9 +399,17 @@ class CharacterBot:
                 command_names = [cmd.name for cmd in self.tree.get_commands()]
                 print(f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}")
                 print(f"[{self.display_name}] コマンドを同期します...")
-                for guild in self.client.guilds:
-                    self.tree.copy_global_to(guild=guild)
-                    await self.tree.sync(guild=guild)
+                
+                # 特定のギルドにのみコマンドを登録
+                if target_guild_id:
+                    target_guild = discord.Object(id=target_guild_id)
+                    self.tree.copy_global_to(guild=target_guild)
+                    await self.tree.sync(guild=target_guild)
+                    print(f"[{self.display_name}] ギルド {target_guild_id} にコマンドを登録しました")
+                else:
+                    for guild in self.client.guilds:
+                        self.tree.copy_global_to(guild=guild)
+                        await self.tree.sync(guild=guild)
                 print(f"[{self.display_name}] コマンド同期完了！")
             except Exception as e:
                 print(f"[{self.display_name}] Command sync error: {e}")
@@ -411,9 +423,9 @@ class CharacterBot:
                 self.scheduled_birthday_check.start()
             
             # 起動時にブルアカ誕生日DBが空ならスクレイピングを実行
-            if self.character_name.lower() == "alice" and birthday_handler.count_character_birthdays() == 0:
+            if self.character_name.lower() == "alice" and character_handler.count_character_birthdays() == 0:
                 print(f"[{self.display_name}] ブルアカ誕生日DBが空のため初回スクレイピングを実行します")
-                asyncio.create_task(birthday_handler.async_scrape_and_update())
+                asyncio.create_task(character_handler.async_scrape_and_update())
 
         @self.client.event
         async def on_message(message: discord.Message):
@@ -699,7 +711,7 @@ class CharacterBot:
                 name: str
             ):
                 await interaction.response.defer()
-                result = await asyncio.to_thread(birthday_handler.get_character_birthday, name)
+                result = await asyncio.to_thread(character_handler.get_character_birthday, name)
                 if result:
                     msg = (
                         f"🎂 **{result['name']}** の誕生日は "
@@ -782,19 +794,18 @@ class CharacterBot:
             @app_commands.describe(name="キャラクター名（部分一致）")
             async def db_search(interaction: discord.Interaction, name: str):
                 await interaction.response.defer()
-                char = await asyncio.to_thread(character_handler.get_character, name)
-                if char:
-                    birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
-                    lines = [
-                        f"=== 検索: {name} ===",
-                        f"【{char['name']}】",
-                        f"  レアリティ: ★ {char['rarity']}",
-                        f"  学校: {char['school_jp']}",
-                        f"  部活: {char['club_jp']}",
-                        f"  誕生日: {birthday}",
-                        f"  身長: {char['height']}",
-                        f"  趣味: {char['hobby']}"
-                    ]
+                chars = await asyncio.to_thread(character_handler.get_characters, name)
+                if chars:
+                    lines = [f"=== 検索: {name} ==="]
+                    for char in chars:
+                        birthday = f"{char['birthday_month']}月{char['birthday_day']}日" if char['birthday_month'] else "不明"
+                        lines.append(f"\n【{char['name']}】")
+                        lines.append(f"  レアリティ: ★ {char['rarity']}")
+                        lines.append(f"  学校: {char['school_jp']}")
+                        lines.append(f"  部活: {char['club_jp']}")
+                        lines.append(f"  誕生日: {birthday}")
+                        lines.append(f"  身長: {char['height']}")
+                        lines.append(f"  趣味: {char['hobby']}")
                     msg = "\n".join(lines)
                 else:
                     msg = f"「{name}」に該当するキャラクターは見つかりませんでした。"
@@ -860,6 +871,7 @@ class CharacterBot:
             # /db_help - ヘルプ
             @self.tree.command(name="db_help", description="データベースコマンドの一覧を表示します")
             async def db_help(interaction: discord.Interaction):
+                await interaction.response.defer()
                 msg = """📖 **ブルーアーカイブ データベース コマンド一覧**
 
 - `/db_search [名前]` — キャラクターを名前で検索します（部分一致）

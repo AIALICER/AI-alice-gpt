@@ -219,6 +219,23 @@ def update_characters(characters: list[dict]) -> int:
 # キャラクター検索
 # =========================================================
 
+def get_characters(name: str, limit: int = 10) -> list[dict]:
+    """キャラ名（部分一致）で複数検索"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+    SELECT * FROM characters
+    WHERE name LIKE ? OR path_name LIKE ?
+    ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END
+    LIMIT ?
+    ''', (f"%{name}%", f"%{name}%", name, limit))
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows] if rows else []
+
+
 def get_character(name: str) -> Optional[dict]:
     """キャラ名（部分一致）で検索"""
     conn = sqlite3.connect(DB_PATH)
