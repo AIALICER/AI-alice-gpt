@@ -244,21 +244,21 @@ class CharacterBot:
             except Exception as e:
                 print(f"[{self.display_name}] Wiki check error: {e}")
 
-    @tasks.loop(time=dt_time(hour=0, minute=0, tzinfo=JST))
+    @tasks.loop(time=dt_time(hour=9, minute=0, tzinfo=JST))
     async def scheduled_birthday_check(self):
         """
-        毎日0時（日本時間）に実行する誕生日チェックタスク。
+        毎日9時（日本時間）に実行する誕生日チェックタスク。
 
         - ユーザー誕生日: USER_BIRTHDAY_CHANNEL_ID のチャンネルにお祝いメッセージ
         - ブルアカキャラ誕生日: BLUEARCHIVE_BIRTHDAY_CHANNEL_ID（お遊戯会）に告知
-        また、月曜日に1回ブルアカ誕生日データのスクレイピングを実行する。
+        告知前に毎日ブルアカ誕生日データ（SchaleDB）のスクレイピングを実行する。
         """
         print(f"[{self.display_name}] 誕生日チェックを開始します")
         today = datetime.now(JST)
         is_alice = self.character_name.lower() == "alice"
 
-        # ========== ブルアカキャラ誕生日の更新（月曜日のみ） ==========
-        if is_alice and today.weekday() == 0:  # 月曜日
+        # ========== ブルアカキャラ誕生日の更新（毎日） ==========
+        if is_alice:
             try:
                 count = await character_handler.async_scrape_and_update()
                 print(f"[{self.display_name}] ブルアカ誕生日DB更新: {count}件")
