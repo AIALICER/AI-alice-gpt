@@ -251,7 +251,7 @@ class CharacterBot:
 
         - ユーザー誕生日: USER_BIRTHDAY_CHANNEL_ID のチャンネルにお祝いメッセージ
         - ブルアカキャラ誕生日: BLUEARCHIVE_BIRTHDAY_CHANNEL_ID（お遊戯会）に告知
-        また、月曜日に1回ブルアカ誕生日データのスクレイピングを実行する。
+        また、月曜日に1回ブルアカ誕生日データ（SchaleDB）のスクレイピングを実行する。
         """
         print(f"[{self.display_name}] 誕生日チェックを開始します")
         today = datetime.now(JST)
