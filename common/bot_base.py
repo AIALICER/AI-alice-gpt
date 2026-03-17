@@ -244,10 +244,10 @@ class CharacterBot:
             except Exception as e:
                 print(f"[{self.display_name}] Wiki check error: {e}")
 
-    @tasks.loop(time=dt_time(hour=0, minute=0, tzinfo=JST))
+    @tasks.loop(time=dt_time(hour=9, minute=0, tzinfo=JST))
     async def scheduled_birthday_check(self):
         """
-        毎日0時（日本時間）に実行する誕生日チェックタスク。
+        毎日9時（日本時間）に実行する誕生日チェックタスク。
 
         - ユーザー誕生日: USER_BIRTHDAY_CHANNEL_ID のチャンネルにお祝いメッセージ
         - ブルアカキャラ誕生日: BLUEARCHIVE_BIRTHDAY_CHANNEL_ID（お遊戯会）に告知
