@@ -14,9 +14,31 @@ from typing import Optional
 import requests
 
 JST = timezone(timedelta(hours=9))
-SCHALEDB_URL = "https://raw.githubusercontent.com/SchaleDB/SchaleDB/main/data/jp/students.json"
+SCHALEDB_URL = "https://schaledb.com/data/jp/students.min.json"
 LOCALIZATION_URL = "https://raw.githubusercontent.com/SchaleDB/SchaleDB/main/data/jp/localization.json"
 DB_PATH = "data/ba_characters.db"
+
+# スキーマ定義（カラム名, 型定義）
+TABLE_COLUMNS = [
+    ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+    ("name", "TEXT UNIQUE NOT NULL"),
+    ("name_kana", "TEXT"),
+    ("birthday_month", "INTEGER"),
+    ("birthday_day", "INTEGER"),
+    ("rarity", "INTEGER"),
+    ("school", "TEXT"),
+    ("school_jp", "TEXT"),
+    ("club", "TEXT"),
+    ("club_jp", "TEXT"),
+    ("height", "TEXT"),
+    ("hobby", "TEXT"),
+    ("path_name", "TEXT"),
+    ("is_released", "INTEGER DEFAULT 1"),
+    ("school_year", "TEXT"),
+    ("character_age", "TEXT"),
+    ("profile_introduction", "TEXT"),
+    ("updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
+]
 
 # 翻訳マップ
 SCHOOL_TRANSLATION = {}
@@ -79,25 +101,20 @@ def init_db() -> None:
     """キャラクターデータベースを初期化"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS characters (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE,
-        name_kana TEXT,
-        birthday_month INTEGER,
-        birthday_day INTEGER,
-        rarity INTEGER,
-        school TEXT,
-        school_jp TEXT,
-        club TEXT,
-        club_jp TEXT,
-        height TEXT,
-        hobby TEXT,
-        path_name TEXT,
-        is_released INTEGER DEFAULT 1,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
+
+    # CREATE TABLE文を生成
+    columns_sql = ", ".join(f"{col} {dtype}" for col, dtype in TABLE_COLUMNS)
+    cursor.execute(f"CREATE TABLE IF NOT EXISTS characters ({columns_sql})")
+
+    # 既存カラムを確認し、不足カラムを追加
+    cursor.execute("PRAGMA table_info(characters)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    for col, dtype in TABLE_COLUMNS:
+        if col not in existing_columns:
+            cursor.execute(f"ALTER TABLE characters ADD COLUMN {col} {dtype}")
+            print(f"[character_handler] カラム追加: {col}")
+
     conn.commit()
     conn.close()
 
@@ -125,8 +142,11 @@ def scrape_characters() -> list[dict]:
         # 翻訳データも取得
         load_school_translations()
 
-        students = res.json()
+        students_data = res.json()
         birthday_pattern = re.compile(r'(\d{1,2})月(\d{1,2})日')
+
+        # 辞書形式（schaledb.com）またはリスト形式（GitHub）に対応
+        students = students_data.values() if isinstance(students_data, dict) else students_data
 
         for student in students:
             name = student.get("Name", "")
@@ -158,7 +178,10 @@ def scrape_characters() -> list[dict]:
                 "height": student.get("CharHeightMetric", ""),
                 "hobby": student.get("Hobby", ""),
                 "path_name": student.get("PathName", ""),
-                "is_released": 1 if all(student.get("IsReleased", [False])) else 0
+                "is_released": 1 if all(student.get("IsReleased", [False])) else 0,
+                "school_year": student.get("SchoolYear", ""),
+                "character_age": student.get("CharacterAge", ""),
+                "profile_introduction": student.get("ProfileIntroduction", "")
             })
 
         print(f"[character_handler] 取得完了: {len(results)} 件")
@@ -178,34 +201,28 @@ def update_characters(characters: list[dict]) -> int:
     cursor = conn.cursor()
     count = 0
 
+    # INSERT用カラム名（idとupdated_atを除く、updated_atはDEFAULT CURRENT_TIMESTAMPで自動設定）
+    insert_columns = [col for col, dtype in TABLE_COLUMNS if col not in ("id", "updated_at")]
+    placeholders = ", ".join("?" for _ in insert_columns)
+    columns_str = ", ".join(insert_columns)
+
+    # UPDATE用SET句（nameは主キーなので除外）
+    update_columns = [col for col in insert_columns if col != "name"]
+    set_clause = ", ".join(f"{col} = excluded.{col}" for col in update_columns)
+
+    sql = f'''
+    INSERT INTO characters ({columns_str})
+    VALUES ({placeholders})
+    ON CONFLICT(name)
+    DO UPDATE SET
+        {set_clause},
+        updated_at = CURRENT_TIMESTAMP
+    '''
+
     for c in characters:
         try:
-            cursor.execute('''
-            INSERT INTO characters (
-                name, name_kana, birthday_month, birthday_day,
-                rarity, school, school_jp, club, club_jp,
-                height, hobby, path_name, is_released, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(name)
-            DO UPDATE SET
-                name_kana = excluded.name_kana,
-                birthday_month = excluded.birthday_month,
-                birthday_day = excluded.birthday_day,
-                rarity = excluded.rarity,
-                school = excluded.school,
-                school_jp = excluded.school_jp,
-                club = excluded.club,
-                club_jp = excluded.club_jp,
-                height = excluded.height,
-                hobby = excluded.hobby,
-                path_name = excluded.path_name,
-                is_released = excluded.is_released,
-                updated_at = excluded.updated_at
-            ''', (
-                c["name"], c["name_kana"], c["birthday_month"], c["birthday_day"],
-                c["rarity"], c["school"], c["school_jp"], c["club"], c["club_jp"],
-                c["height"], c["hobby"], c["path_name"], c["is_released"]
-            ))
+            values = [c.get(col) for col in insert_columns]
+            cursor.execute(sql, values)
             count += 1
         except Exception as e:
             print(f"[character_handler] upsertエラー ({c.get('name', 'unknown')}): {e}")
@@ -385,6 +402,4 @@ def get_today_character_birthdays() -> list[dict]:
     rows = cursor.fetchall()
     conn.close()
     return [{"name": r["name"], "month": r["birthday_month"], "day": r["birthday_day"]} for r in rows]
-
-
 
