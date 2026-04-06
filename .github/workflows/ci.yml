@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  lint-and-format:
+    name: Lint & Format (Ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Ruff Linter
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check ."
+
+      - name: Run Ruff Formatter Check
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check ."
+
+  type-and-security:
+    name: Type & Security Check (uv)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements.txt"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies and tools using uv
+        run: |
+          uv pip install --system -r requirements.txt
+          uv pip install --system mypy bandit pip-audit types-requests types-beautifulsoup4
+
+      - name: Run mypy (Type Check)
+        run: mypy .
+
+      - name: Run Bandit (Security Check)
+        run: bandit -c pyproject.toml -r .
+
+      - name: Run pip-audit (Vulnerability Check)
+        run: pip-audit -r requirements.txt
+
+  docker-check:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create dummy .env for validation
+        run: cp .env.example .env || touch .env
+
+      - name: Check Compose YAML
+        run: docker compose config -q
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image with Cache
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ai-alice:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

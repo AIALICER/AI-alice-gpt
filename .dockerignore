@@ -1,0 +1,33 @@
+# Git repository
+.git/
+.gitignore
+
+# Environment variables
+.env
+.venv/
+venv/
+env/
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data and logs
+data/
+*.log
+
+# Editor and IDE configurations
+.vscode/
+.idea/
+*.swp
+
+# Docker
+docker-compose.yml
+compose.yaml
+
+# CI/CD
+.github/
+
+# Deprecated code
+_deprecated/
