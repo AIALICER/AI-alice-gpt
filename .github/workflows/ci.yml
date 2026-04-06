@@ -17,7 +17,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Pythonのセットアップ不要でRustバイナリのRuffを超高速実行
       - name: Run Ruff Linter
         uses: astral-sh/ruff-action@v3
         with:
@@ -39,6 +38,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          cache-dependency-glob: "requirements.txt"
 
       - name: Set up Python
         run: uv python install 3.12
@@ -63,6 +63,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Create dummy .env for validation
+        run: cp .env.example .env || touch .env
 
       - name: Check Compose YAML
         run: docker compose config -q
