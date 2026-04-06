@@ -25,7 +25,6 @@ data/
 # Docker
 docker-compose.yml
 compose.yaml
-Dockerfile
 
 # CI/CD
 .github/
