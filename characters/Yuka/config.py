@@ -3,6 +3,7 @@
 """
 
 import re
+
 from characters.bot_id_list import get_partner_info
 
 # キャラクター名
@@ -10,15 +11,13 @@ CHARACTER_NAME = "yuka"  # DB名に使用
 DISPLAY_NAME = "ユウカ"
 
 # コマンドパターン（全角/半角の!、全角/半角スペース、改行に対応）
-COMMAND_PATTERN = re.compile(r'^[!！]ユウカ[ 　\n]')
+COMMAND_PATTERN = re.compile(r"^[!！]ユウカ[ 　\n]")
 HISTORY_CLEAR_COMMAND = "!ユウカ 履歴消去"
 # 環境変数キー
 DISCORD_TOKEN_ENV = "YUKA_DISCORD_TOKEN"
 
 # 特殊コマンド
-SPECIAL_COMMANDS = {
-    
-}
+SPECIAL_COMMANDS = {}
 
 # システムインストラクションパス
 SYSTEM_INSTRUCTION_PATH = "characters/Yuka/system_instruction.txt"

@@ -5,17 +5,18 @@ SchaleDBからキャラクター情報を取得・保存・管理する。
 - 名前、誕生日、レアリティ、所属学校、部活、身長、趣味など
 """
 
-import sqlite3
 import asyncio
 import re
-import json
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
 import requests
 
 JST = timezone(timedelta(hours=9))
 SCHALEDB_URL = "https://schaledb.com/data/jp/students.min.json"
-LOCALIZATION_URL = "https://raw.githubusercontent.com/SchaleDB/SchaleDB/main/data/jp/localization.json"
+LOCALIZATION_URL = (
+    "https://raw.githubusercontent.com/SchaleDB/SchaleDB/main/data/jp/localization.json"
+)
 DB_PATH = "data/ba_characters.db"
 
 # スキーマ定義（カラム名, 型定義）
@@ -45,6 +46,7 @@ SCHOOL_TRANSLATION = {}
 SCHOOL_LONG_TRANSLATION = {}
 CLUB_TRANSLATION = {}
 
+
 def load_school_translations():
     """学校名・部活名の翻訳データを読み込む"""
     global SCHOOL_TRANSLATION, SCHOOL_LONG_TRANSLATION, CLUB_TRANSLATION
@@ -54,9 +56,12 @@ def load_school_translations():
         SCHOOL_TRANSLATION = data.get("School", {})
         SCHOOL_LONG_TRANSLATION = data.get("SchoolLong", {})
         CLUB_TRANSLATION = data.get("Club", {})
-        print(f"[character_handler] 翻訳データ読み込み完了: 学校={len(SCHOOL_TRANSLATION)}件, 部活={len(CLUB_TRANSLATION)}件")
+        print(
+            f"[character_handler] 翻訳データ読み込み完了: 学校={len(SCHOOL_TRANSLATION)}件, 部活={len(CLUB_TRANSLATION)}件"
+        )
     except Exception as e:
         print(f"[character_handler] 翻訳データ読み込みエラー: {e}")
+
 
 def get_school_name_japanese(school_code: str, long_name: bool = False) -> str:
     """
@@ -77,6 +82,7 @@ def get_school_name_japanese(school_code: str, long_name: bool = False) -> str:
     else:
         return SCHOOL_TRANSLATION.get(school_code, school_code)
 
+
 def get_club_name_japanese(club_code: str) -> str:
     """
     部活コードから日本語の部活名を取得
@@ -89,13 +95,14 @@ def get_club_name_japanese(club_code: str) -> str:
     """
     if not CLUB_TRANSLATION:
         load_school_translations()
-    
+
     return CLUB_TRANSLATION.get(club_code, club_code)
 
 
 # =========================================================
 # DBセットアップ
 # =========================================================
+
 
 def init_db() -> None:
     """キャラクターデータベースを初期化"""
@@ -123,6 +130,7 @@ def init_db() -> None:
 # SchaleDBからデータ取得
 # =========================================================
 
+
 def scrape_characters() -> list[dict]:
     """SchaleDB からキャラクター情報を取得する"""
     headers = {
@@ -143,7 +151,7 @@ def scrape_characters() -> list[dict]:
         load_school_translations()
 
         students_data = res.json()
-        birthday_pattern = re.compile(r'(\d{1,2})月(\d{1,2})日')
+        birthday_pattern = re.compile(r"(\d{1,2})月(\d{1,2})日")
 
         # 辞書形式（schaledb.com）またはリスト形式（GitHub）に対応
         students = students_data.values() if isinstance(students_data, dict) else students_data
@@ -165,24 +173,26 @@ def scrape_characters() -> list[dict]:
             school_code = student.get("School", "")
             club_code = student.get("Club", "")
 
-            results.append({
-                "name": name,
-                "name_kana": student.get("PersonalNameRuby", ""),
-                "birthday_month": birthday_month,
-                "birthday_day": birthday_day,
-                "rarity": student.get("StarGrade", 0),
-                "school": school_code,
-                "school_jp": get_school_name_japanese(school_code, False),
-                "club": club_code,
-                "club_jp": get_club_name_japanese(club_code),
-                "height": student.get("CharHeightMetric", ""),
-                "hobby": student.get("Hobby", ""),
-                "path_name": student.get("PathName", ""),
-                "is_released": 1 if all(student.get("IsReleased", [False])) else 0,
-                "school_year": student.get("SchoolYear", ""),
-                "character_age": student.get("CharacterAge", ""),
-                "profile_introduction": student.get("ProfileIntroduction", "")
-            })
+            results.append(
+                {
+                    "name": name,
+                    "name_kana": student.get("PersonalNameRuby", ""),
+                    "birthday_month": birthday_month,
+                    "birthday_day": birthday_day,
+                    "rarity": student.get("StarGrade", 0),
+                    "school": school_code,
+                    "school_jp": get_school_name_japanese(school_code, False),
+                    "club": club_code,
+                    "club_jp": get_club_name_japanese(club_code),
+                    "height": student.get("CharHeightMetric", ""),
+                    "hobby": student.get("Hobby", ""),
+                    "path_name": student.get("PathName", ""),
+                    "is_released": 1 if all(student.get("IsReleased", [False])) else 0,
+                    "school_year": student.get("SchoolYear", ""),
+                    "character_age": student.get("CharacterAge", ""),
+                    "profile_introduction": student.get("ProfileIntroduction", ""),
+                }
+            )
 
         print(f"[character_handler] 取得完了: {len(results)} 件")
         return results
@@ -210,14 +220,14 @@ def update_characters(characters: list[dict]) -> int:
     update_columns = [col for col in insert_columns if col != "name"]
     set_clause = ", ".join(f"{col} = excluded.{col}" for col in update_columns)
 
-    sql = f'''
+    sql = f"""
     INSERT INTO characters ({columns_str})
     VALUES ({placeholders})
     ON CONFLICT(name)
     DO UPDATE SET
         {set_clause},
         updated_at = CURRENT_TIMESTAMP
-    '''
+    """
 
     for c in characters:
         try:
@@ -236,34 +246,41 @@ def update_characters(characters: list[dict]) -> int:
 # キャラクター検索
 # =========================================================
 
+
 def get_characters(name: str, limit: int = 10) -> list[dict]:
     """キャラ名（部分一致）で複数検索"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
     SELECT * FROM characters
     WHERE name LIKE ? OR path_name LIKE ?
     ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END
     LIMIT ?
-    ''', (f"%{name}%", f"%{name}%", name, limit))
+    """,
+        (f"%{name}%", f"%{name}%", name, limit),
+    )
     rows = cursor.fetchall()
     conn.close()
 
     return [dict(row) for row in rows] if rows else []
 
 
-def get_character(name: str) -> Optional[dict]:
+def get_character(name: str) -> dict | None:
     """キャラ名（部分一致）で検索"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
     SELECT * FROM characters
     WHERE name LIKE ? OR path_name LIKE ?
     ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END
     LIMIT 1
-    ''', (f"%{name}%", f"%{name}%", name))
+    """,
+        (f"%{name}%", f"%{name}%", name),
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -275,11 +292,14 @@ def get_characters_by_school(school: str) -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
     SELECT * FROM characters
     WHERE school = ? OR school_jp LIKE ? OR school LIKE ?
     ORDER BY name
-    ''', (school, f"%{school}%", f"%{school}%"))
+    """,
+        (school, f"%{school}%", f"%{school}%"),
+    )
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -290,7 +310,7 @@ def get_all_characters() -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM characters ORDER BY rarity DESC, name')
+    cursor.execute("SELECT * FROM characters ORDER BY rarity DESC, name")
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -301,13 +321,13 @@ def get_school_list() -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute("""
     SELECT school, school_jp, COUNT(*) as count
     FROM characters
     WHERE school != ''
     GROUP BY school, school_jp
     ORDER BY count DESC
-    ''')
+    """)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -316,6 +336,7 @@ def get_school_list() -> list[dict]:
 # =========================================================
 # 非同期ラッパー
 # =========================================================
+
 
 async def async_update() -> int:
     """非同期でデータ更新"""
@@ -331,17 +352,16 @@ async def async_update() -> int:
 # 互換性のため（旧birthday_handler用）
 # =========================================================
 
+
 def scrape_bluearchive_birthdays() -> list[dict]:
     """旧birthday_handler互換: 誕生日データのみを取得"""
     characters = scrape_characters()
     results = []
     for c in characters:
         if c["birthday_month"] and c["birthday_day"]:
-            results.append({
-                "name": c["name"],
-                "month": c["birthday_month"],
-                "day": c["birthday_day"]
-            })
+            results.append(
+                {"name": c["name"], "month": c["birthday_month"], "day": c["birthday_day"]}
+            )
     return results
 
 
@@ -371,16 +391,19 @@ def count_character_birthdays() -> int:
     return count
 
 
-def get_character_birthday(name: str) -> Optional[dict]:
+def get_character_birthday(name: str) -> dict | None:
     """旧birthday_handler互換"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
     SELECT name, birthday_month, birthday_day FROM characters
     WHERE name LIKE ? AND birthday_month IS NOT NULL
     ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END LIMIT 1
-    ''', (f"%{name}%", name))
+    """,
+        (f"%{name}%", name),
+    )
     row = cursor.fetchone()
     conn.close()
     if row and row["birthday_month"]:
@@ -394,12 +417,16 @@ def get_today_character_birthdays() -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute('''
+    cursor.execute(
+        """
     SELECT name, birthday_month, birthday_day FROM characters
     WHERE birthday_month = ? AND birthday_day = ?
     ORDER BY name
-    ''', (today.month, today.day))
+    """,
+        (today.month, today.day),
+    )
     rows = cursor.fetchall()
     conn.close()
-    return [{"name": r["name"], "month": r["birthday_month"], "day": r["birthday_day"]} for r in rows]
-
+    return [
+        {"name": r["name"], "month": r["birthday_month"], "day": r["birthday_day"]} for r in rows
+    ]

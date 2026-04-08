@@ -3,6 +3,7 @@
 """
 
 import re
+
 from characters.bot_id_list import get_partner_info
 
 # キャラクター名
@@ -10,7 +11,7 @@ CHARACTER_NAME = "alice"  # DB名に使用
 DISPLAY_NAME = "アリス"
 
 # コマンドパターン（全角/半角の!、全角/半角スペース、改行に対応）
-COMMAND_PATTERN = re.compile(r'^[!！]アリス[ 　\n]')
+COMMAND_PATTERN = re.compile(r"^[!！]アリス[ 　\n]")
 HISTORY_CLEAR_COMMAND = "!アリス 履歴消去"
 # 環境変数キー
 DISCORD_TOKEN_ENV = "DISCORD_TOKEN"
@@ -19,7 +20,7 @@ DISCORD_TOKEN_ENV = "DISCORD_TOKEN"
 SPECIAL_COMMANDS = {
     "!光よ!": {
         "message": "ターゲット確認！出力臨界点突破！光よ！",
-        "file": "characters/AL_1S/assets/光よ！.jpg"
+        "file": "characters/AL_1S/assets/光よ！.jpg",
     }
 }
 

@@ -18,8 +18,8 @@ common - Discord Bot共通モジュール
 from .config_base import (
     DB_DIR,
     DISCORD_HISTORY_LIMIT,
-    ENABLE_DISCORD_HISTORY,
     DISCORD_HISTORY_MAX_CHARS,
+    ENABLE_DISCORD_HISTORY,
     GEN_API_KEY,
     gemini_client,
     get_db_path,
@@ -27,12 +27,12 @@ from .config_base import (
 )
 
 __all__ = [
-    'DB_DIR',
-    'DISCORD_HISTORY_LIMIT',
-    'ENABLE_DISCORD_HISTORY',
-    'DISCORD_HISTORY_MAX_CHARS',
-    'GEN_API_KEY',
-    'gemini_client',
-    'get_db_path',
-    'init_database',
+    "DB_DIR",
+    "DISCORD_HISTORY_LIMIT",
+    "ENABLE_DISCORD_HISTORY",
+    "DISCORD_HISTORY_MAX_CHARS",
+    "GEN_API_KEY",
+    "gemini_client",
+    "get_db_path",
+    "init_database",
 ]
