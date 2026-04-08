@@ -9,17 +9,16 @@
 
 import os
 import sqlite3
-
 import httpx
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from dotenv import load_dotenv
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
 
 # === データベース設定 ===
-DB_DIR = "data"
+DB_DIR = 'data'
 if not os.path.exists(DB_DIR):
     os.makedirs(DB_DIR)
 
@@ -40,14 +39,11 @@ def _read_channel_id(env_name: str, default: int | None = None) -> int | None:
         print(f"[config_base] Invalid channel id for {env_name}: {raw_value!r}. Fallback={default}")
         return default
 
-
 # === 誕生日通知チャンネル設定 ===
 # ユーザー誕生日: None の場合はBotが参加している最初に見つかったテキストチャンネルに送信
 USER_BIRTHDAY_CHANNEL_ID: int | None = _read_channel_id("USER_BIRTHDAY_CHANNEL_ID")
 # ブルアカキャラ誕生日: お遊戯会チャンネル固定
-BLUEARCHIVE_BIRTHDAY_CHANNEL_ID: int = _read_channel_id(
-    "BLUEARCHIVE_BIRTHDAY_CHANNEL_ID", 1051173133228462220
-)
+BLUEARCHIVE_BIRTHDAY_CHANNEL_ID: int = _read_channel_id("BLUEARCHIVE_BIRTHDAY_CHANNEL_ID", 1051173133228462220)
 
 # === Discord履歴設定 ===
 DISCORD_HISTORY_LIMIT = 5  # Discordから取得するメッセージ数
@@ -71,8 +67,8 @@ gemini_http_options = types.HttpOptions(
         maxDelay=2.0,
         expBase=2.0,
         jitter=0.1,
-        httpStatusCodes=[429, 503],
-    ),
+        httpStatusCodes=[429, 503]
+    )
 )
 
 gemini_http_options_fallback = types.HttpOptions(
@@ -83,28 +79,32 @@ gemini_http_options_fallback = types.HttpOptions(
         maxDelay=2.0,
         expBase=2.0,
         jitter=0.1,
-        httpStatusCodes=[429, 503],
-    ),
+        httpStatusCodes=[429, 503]
+    )
 )
 
 # メインクライアント（APIキー1）
-gemini_client = genai.Client(api_key=GEN_API_KEY, http_options=gemini_http_options)
+gemini_client = genai.Client(
+    api_key=GEN_API_KEY,
+    http_options=gemini_http_options
+)
 
 # フォールバッククライアント（APIキー2）
 gemini_client_fallback = None
 if GEN_API_KEY_2:
     gemini_client_fallback = genai.Client(
-        api_key=GEN_API_KEY_2, http_options=gemini_http_options_fallback
+        api_key=GEN_API_KEY_2,
+        http_options=gemini_http_options_fallback
     )
 
 
 def get_db_path(character_name: str) -> str:
     """
     キャラクター別のDBパスを取得
-
+    
     Args:
         character_name: キャラクター名（例: "alice", "kei"）
-
+    
     Returns:
         str: データベースファイルのパス
     """
@@ -115,17 +115,17 @@ def get_db_path(character_name: str) -> str:
 def init_database(db_path: str) -> None:
     """
     データベースの初期化
-
+    
     必要なテーブル（chat_history, chat_memories）を作成する
-
+    
     Args:
         db_path: データベースファイルのパス
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-
+    
     # チャンネルごとに履歴を保存するテーブル
-    cursor.execute("""
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS chat_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         channel_id INTEGER,
@@ -133,17 +133,17 @@ def init_database(db_path: str) -> None:
         content TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-    """)
-
+    ''')
+    
     # チャンネルごとの記憶（要約）を保存するテーブル
-    cursor.execute("""
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS chat_memories (
         channel_id INTEGER PRIMARY KEY,
         content TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-    """)
-    cursor.execute("""
+    ''')
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS url_memories (
         id INTEGER PRIMARY KEY AUTOINCREMENT, -- 自動で増える通し番号
         channel_id INTEGER,                   -- チャンネルID
@@ -152,17 +152,17 @@ def init_database(db_path: str) -> None:
         message_link TEXT,                    -- Discordのメッセージリンク
         timestamp DATETIME DEFAULT (datetime('now', 'localtime')) -- 実行時の時刻
     )
-    """)
-    cursor.execute("""
+    ''')
+    cursor.execute('''
             CREATE TABLE IF NOT EXISTS wiki_news (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
                 url TEXT UNIQUE,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-    """)
+    ''')
     # ユーザー情報テーブル（メンション時に自動登録）
-    cursor.execute("""
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         display_name TEXT,
@@ -170,7 +170,7 @@ def init_database(db_path: str) -> None:
         birthday TEXT,
         last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-    """)
+    ''')
     # birthday列が存在しない旧DBのマイグレーション
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN birthday TEXT")

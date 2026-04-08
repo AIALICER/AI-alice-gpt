@@ -126,7 +126,9 @@ def show_sample(count=10):
     load_school_translations()
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM characters ORDER BY rarity DESC, name LIMIT ?", (count,))
+    cursor.execute(
+        "SELECT * FROM characters ORDER BY rarity DESC, name LIMIT ?", (count,)
+    )
     rows = cursor.fetchall()
 
     print(f"=== サンプル {len(rows)}件 ===")
@@ -136,7 +138,9 @@ def show_sample(count=10):
         print(f"  学校: {row['school_jp']} ({row['school']})")
         print(f"  部活: {row['club_jp']} ({row['club']})")
         birthday = (
-            f"{row['birthday_month']}月{row['birthday_day']}日" if row["birthday_month"] else "不明"
+            f"{row['birthday_month']}月{row['birthday_day']}日"
+            if row["birthday_month"]
+            else "不明"
         )
         print(f"  誕生日: {birthday}")
         print(f"  身長: {row['height']}")
@@ -237,7 +241,9 @@ def show_stats():
     print("=== 統計情報 ===")
 
     # レアリティ分布
-    cursor.execute("SELECT rarity, COUNT(*) FROM characters GROUP BY rarity ORDER BY rarity")
+    cursor.execute(
+        "SELECT rarity, COUNT(*) FROM characters GROUP BY rarity ORDER BY rarity"
+    )
     print("\nレアリティ分布:")
     for rarity, count in cursor.fetchall():
         print(f"  ★{rarity}: {count}人")

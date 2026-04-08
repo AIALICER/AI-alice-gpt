@@ -3,6 +3,7 @@
 """
 
 # 相方Bot情報（configからインポート）
+from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
 
 # エラーメッセージ
 RESPONSE_FAILED = "アリス,メッセージ出力に失敗しました...デバッグ作業が必要かもしれません！"
@@ -15,9 +16,7 @@ MSG_SEARCHING = "アリス、検索中です！"
 # タイマー関連
 MSG_NO_ACTIVE_TIMERS = "現在動いているタイマーはありません!"
 MSG_ACTIVE_TIMERS_HEADER = "現在稼働中のタイマーはこちらです！"
-MSG_TIMER_FINISH = (
-    "（パンパカパーン！）先生、お時間です！「{task_name}」のクエストの開始時刻ですよ！"
-)
+MSG_TIMER_FINISH = "（パンパカパーン！）先生、お時間です！「{task_name}」のクエストの開始時刻ですよ！"
 MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です！"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了です！"
 MSG_TIMER_SET = "了解です！{time_str}のタイマーを設定しました！「{task_name}」のクエスト開始時刻になったらお知らせしますよ！"

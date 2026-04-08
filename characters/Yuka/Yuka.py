@@ -10,14 +10,14 @@ Environment Variables:
     GEN_API_KEY: Google Gemini API Key
 """
 
-import os
 import sys
+import os
 
 # プロジェクトルートをパスに追加
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from characters import Yuka
 from common.bot_base import CharacterBot
+from characters import Yuka
 
 if __name__ == "__main__":
     bot = CharacterBot(
@@ -28,6 +28,6 @@ if __name__ == "__main__":
         discord_token_env=Yuka.config.DISCORD_TOKEN_ENV,
         system_instruction_path=Yuka.config.SYSTEM_INSTRUCTION_PATH,
         messages=Yuka.messages,
-        special_commands=Yuka.config.SPECIAL_COMMANDS,
+        special_commands=Yuka.config.SPECIAL_COMMANDS
     )
     bot.run()

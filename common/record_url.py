@@ -1,19 +1,22 @@
 import re
 import sqlite3
+import asyncio
+import discord
 from typing import Any
 
-import discord
 from google.genai import types
-
-from . import file_handler, gemini_handler, url_handler
 from .config_base import gemini_client
+from . import url_handler
+from . import file_handler
+from . import gemini_handler
+
 
 
 async def add_memory_with_context(
-    message: discord.Message,
+    message: discord.Message, 
     interaction: discord.Interaction = None,
-    db_path: str = "",  # self.db_path の代わり
-    display_name: str = "Bot",  # self.display_name の代わり
+    db_path: str = "",          # self.db_path の代わり
+    display_name: str = "Bot"    # self.display_name の代わり
 ) -> None:
     """
     メッセージからURLやファイルを抽出し、内容を要約して url_memories テーブルに保存する
@@ -23,9 +26,9 @@ async def add_memory_with_context(
     # インタラクションがあればその実行者、なければメッセージの送信者IDを取得
     if interaction:
         executing_user_id = interaction.user.id
-    elif hasattr(message, "author"):
+    elif hasattr(message, 'author'):
         executing_user_id = message.author.id
-    elif hasattr(message, "user"):  # messageがInteractionだった場合の予備
+    elif hasattr(message, 'user'): # messageがInteractionだった場合の予備
         executing_user_id = message.user.id
     else:
         executing_user_id = 0
@@ -35,11 +38,11 @@ async def add_memory_with_context(
     file_parts = []
     file_summary = ""
     if message.attachments:
-        max_attachments = 10
-        file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
-        if file_parts:
+      max_attachments = 10 
+      file_parts = await file_handler.process_attachments(message.attachments[:max_attachments])
+      if file_parts:
             # ユーザーのプロンプトを文脈として渡して要約
-            file_summary = await file_handler.summarize_attachments(raw_text, file_parts)
+            file_summary = await file_handler.summarize_attachments(raw_text, file_parts)      
     # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
     url_context = ""
     if raw_text:
@@ -64,18 +67,16 @@ async def add_memory_with_context(
     try:
         config = types.GenerateContentConfig(
             system_instruction="あなたは記憶整理の専門家です。簡潔な一行インデックスを作成してください。",
-            max_output_tokens=60,
+            max_output_tokens=60
         )
         # 高速なモデル（flash）で実行
         response = await gemini_handler.generate_content_with_fallback(
             client=gemini_client,
-            primary_model="gemini-2.0-flash",
+            primary_model='gemini-2.0-flash',
             contents=[{"role": "user", "parts": [{"text": summary_prompt}]}],
-            config=config,
+            config=config
         )
-        summary_text = (
-            response.text.strip() if hasattr(response, "text") else "内容の解析に失敗しました"
-        )
+        summary_text = response.text.strip() if hasattr(response, 'text') else "内容の解析に失敗しました"
     except Exception as e:
         print(f"[{display_name}] Memory Summary Error: {e}")
         summary_text = raw_text[:30] + "..."
@@ -84,24 +85,19 @@ async def add_memory_with_context(
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
+            cursor.execute('''
                 INSERT INTO url_memories (channel_id, user_id, summary, message_link)
                 VALUES (?, ?, ?, ?)
-            """,
-                (channel_id, executing_user_id, summary_text, message_link),
-            )
+            ''', (channel_id, executing_user_id, summary_text, message_link))
             conn.commit()
             print(f"[{display_name}] Memory saved for user {executing_user_id}: {summary_text}")
     except Exception as e:
         print(f"[{display_name}] DB Store Error: {e}")
-
-
 async def find_best_memory_from_limited_list(query: str, limit: int, db_path: str):
     """
     指定された件数(limit)の履歴をDBから取得し、Geminiにその中で最適な1件を選ばせる
     """
-
+    
     # 1. 指定された件数(limit)分、最新の履歴を取得
     memories = []
     try:
@@ -111,7 +107,7 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
             # ここで引数の limit を反映
             cursor.execute(
                 "SELECT id, summary, message_link, timestamp FROM url_memories ORDER BY timestamp DESC LIMIT ?",
-                (limit,),
+                (limit,)
             )
             memories = cursor.fetchall()
     except Exception as e:
@@ -129,8 +125,8 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
     # 3. Geminiに「指定リストの中から最適解」を選ばせる
     config = types.GenerateContentConfig(
         system_instruction="あなたは記憶検索の専門家です。関連するIDを1つだけ抽出してください。",
-        max_output_tokens=20,  # IDを答えるだけなので短くてOK
-        temperature=0.0,  # 判定のブレをなくすため0に設定
+        max_output_tokens=20, # IDを答えるだけなので短くてOK
+        temperature=0.0       # 判定のブレをなくすため0に設定
     )
 
     judgement_prompt = (
@@ -143,42 +139,41 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
         # --- 修正ポイント：引数に config=config を追加 ---
         response = await gemini_handler.generate_content_with_fallback(
             client=gemini_client,
-            primary_model="gemini-2.0-flash",
+            primary_model='gemini-2.0-flash',
             contents=[{"role": "user", "parts": [{"text": judgement_prompt}]}],
-            config=config,  # 👈 これが足りなかった引数です！
+            config=config  # 👈 これが足りなかった引数です！
         )
-
+        
         best_id_text = response.text.strip()
         if "NONE" in best_id_text or not any(char.isdigit() for char in best_id_text):
             return None
-
+        
         # 数値のみを抽出（念のため）
-        match = re.search(r"\d+", best_id_text)
-        if not match:
-            return None
-
+        match = re.search(r'\d+', best_id_text)
+        if not match: return None
+        
         best_id = int(match.group())
-        return next((m for m in memories if m["id"] == best_id), None)
+        return next((m for m in memories if m['id'] == best_id), None)
 
     except Exception as e:
         print(f"Gemini Judgement Error: {e}")
         return None
-
-
 async def create_memory_thread(
-    interaction: discord.Interaction,
-    query: str,
-    limit: int,
+    interaction: discord.Interaction, 
+    query: str, 
+    limit: int, 
     db_path: str,
     display_name: str,
-    messages: Any,
+    messages:Any
+
 ) -> None:
     # 1. 検索実行（指定された limit 件の中から最高の一件を Gemini が選ぶ）
     best_memory = await find_best_memory_from_limited_list(query, limit, db_path)
 
     # 2. スレッドの作成
     thread = await interaction.channel.create_thread(
-        name=f"記憶探索：{query[:10]} (最新{limit}件より)", type=discord.ChannelType.private_thread
+        name=f"記憶探索：{query[:10]} (最新{limit}件より)",
+        type=discord.ChannelType.private_thread
     )
     await thread.add_user(interaction.user)
 
@@ -187,18 +182,16 @@ async def create_memory_thread(
         embed = discord.Embed(
             title=messages.MEMORY_TITLE,
             description=messages.MEMORY_DEST,
-            color=discord.Color.green(),
+            color=discord.Color.green()
         )
-        embed.add_field(name="📌 要約", value=best_memory["summary"], inline=False)
-        embed.add_field(name="📅 日時", value=best_memory["timestamp"])
-        embed.add_field(
-            name="🔗 リンク", value=f"[当時のメッセージへ]({best_memory['message_link']})"
-        )
-
-        await thread.send(content=f"{interaction.user.mention}" + messages.MEMORY_CHAT, embed=embed)
+        embed.add_field(name="📌 要約", value=best_memory['summary'], inline=False)
+        embed.add_field(name="📅 日時", value=best_memory['timestamp'])
+        embed.add_field(name="🔗 リンク", value=f"[当時のメッセージへ]({best_memory['message_link']})")
+        
+        await thread.send(content=f"{interaction.user.mention}"+messages.MEMORY_CHAT, embed=embed)
     else:
         await thread.send(
-            messages.MEMORY_NOFIND.format(limit=limit, query=query) + messages.MEMORY_ER
+            messages.MEMORY_NOFIND.format(limit=limit,query=query)+messages.MEMORY_ER
         )
 
     await interaction.followup.send(f"スレッドを作成しました: {thread.mention}", ephemeral=True)

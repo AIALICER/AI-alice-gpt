@@ -2,4 +2,5 @@
 Key (ケイ) キャラクターパッケージ
 """
 
-from . import config, messages
+from . import config
+from . import messages

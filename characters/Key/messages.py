@@ -3,6 +3,7 @@
 """
 
 # 相方Bot情報（configからインポート）
+from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
 
 # エラーメッセージ
 RESPONSE_FAILED = "……エラーが発生しました。修復を試みます。"
@@ -19,9 +20,7 @@ MSG_TIMER_FINISH = "先生、時間です。「{task_name}」の開始時刻に�
 MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です。"
 MSG_TIMER_SOON = "・{task_name}: まもなく終了します。"
 MSG_TIMER_SET = "{time_str}のタイマーを設定しました。「{task_name}」の時間になったら通知します。"
-MSG_TIMER_GUIDE = (
-    "タイマー機能はスラッシュコマンドから利用できます。\\n`/timer` コマンドで設定してください。"
-)
+MSG_TIMER_GUIDE = "タイマー機能はスラッシュコマンドから利用できます。\\n`/timer` コマンドで設定してください。"
 
 # ダイスロール関連
 MSG_DICE_RESULT = "🎲 ダイスロール結果\n**{notation}** → {rolls}\n合計: **{total}**"
