@@ -45,17 +45,18 @@ jobs:
 
       - name: Install dependencies and tools using uv
         run: |
-          uv pip install --system -r requirements.txt
-          uv pip install --system mypy bandit pip-audit types-requests types-beautifulsoup4
+          uv venv .venv
+          uv pip install -r requirements.txt
+          uv pip install mypy bandit pip-audit types-requests types-beautifulsoup4
 
       - name: Run mypy (Type Check)
-        run: mypy .
+        run: .venv/bin/mypy .
 
       - name: Run Bandit (Security Check)
-        run: bandit -c pyproject.toml -r .
+        run: .venv/bin/bandit -c pyproject.toml -r .
 
       - name: Run pip-audit (Vulnerability Check)
-        run: pip-audit -r requirements.txt
+        run: .venv/bin/pip-audit -r requirements.txt
 
   docker-check:
     name: Docker Build Check
