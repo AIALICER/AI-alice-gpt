@@ -89,6 +89,24 @@ pip install -r requirements.txt
 python characters/AL_1S/alice.py
 ```
 
+### ローカルでのテスト（Discord不要）
+
+Discord Botとして起動する前に、ローカル環境で直接会話をテストできます。
+
+**事前準備:**
+`.env` ファイルを作成し、**`GEN_API_KEY`**（Google Gemini APIキー）を最低限設定してください。
+※ローカルテストモードでは Discord Token の設定は不要（空のままでも動作可能）です。
+
+**インタラクティブモード（対話形式）:**
+```bash
+python characters/AL_1S/alice.py --local
+```
+
+**シングルショットモード（1回のみ実行）:**
+```bash
+python characters/AL_1S/alice.py --message "こんにちは、アリス！"
+```
+
 ## 注意事項
 
 - `.env`ファイルには機密情報が含まれるため、GitHubにアップロードしないでください
