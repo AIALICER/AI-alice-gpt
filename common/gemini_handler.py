@@ -40,77 +40,64 @@ def _should_try_fallback_key(e: Exception, error_str: str) -> bool:
 
 async def generate_content_with_fallback(client, primary_model: str, contents, config):
     """
-    APIレートリミット/タイムアウト発生時に自動フォールバックするラッパー関数
+    APIレートリミット/タイムアウト発生時に指定の順序で自動フォールバックする
 
-    フォールバック順序:
-    1. primary_model with client (gemini-3.1-flash-lite-preview等)
-    2. primary_model with fallback_client (APIキー2)
-    3. gemini-3-flash-preview (ThinkingConfig対応)
-    4. gemini-2.0-flash (ThinkingConfig除外)
-    5. gemini-2.0-flash-lite (ThinkingConfig除外)
+    試行順序:
+    1. APIキー1 + Gemini 3 Flash
+    2. APIキー1 + Gemini 3.1 Flash-Lite
+    3. APIキー2 + Gemini 3 Flash (課金枠)
+    4. APIキー2 + Gemini 3.1 Flash-Lite
+    5. APIキー2 + Gemini 2.0 Flash
     """
-    fallback_chain = [
-        ("gemini-3-flash-preview", True),
-        ("gemini-2.0-flash", False),
-        ("gemini-2.0-flash-lite", False),
+    # 実行プランの構築 (使用クライアント, モデル名, ThinkingConfig対応)
+    execution_plan = [
+        (gemini_client, "gemini-3-flash-preview", True),  # 1. API1 + 3 Flash
+        (gemini_client, "gemini-3.1-flash-lite-preview", True),  # 2. API1 + Lite
     ]
 
-    models_to_try = [(primary_model, True)] + fallback_chain
-    used_fallback_key = False
+    # APIキー2が設定されている場合、課金枠のプランを追加
+    if gemini_client_fallback:
+        execution_plan.extend(
+            [
+                (gemini_client_fallback, "gemini-3-flash-preview", True),  # 3. API2 + 3 Flash
+                (gemini_client_fallback, "gemini-3.1-flash-lite-preview", True),  # 4. API2 + Lite
+                (gemini_client_fallback, "gemini-2.0-flash", False),  # 5. API2 + 2.0 Flash
+            ]
+        )
+    else:
+        # APIキー2がない場合のセーフティネット
+        execution_plan.append((gemini_client, "gemini-2.0-flash", False))
 
-    for model_name, can_thinking in models_to_try:
+    last_exception = None
+
+    for target_client, model_name, can_thinking in execution_plan:
         try:
-            print(f"[Gemini API] Using model: {model_name}")
+            # クライアントの識別 (ログ用)
+            client_label = "API_1" if target_client == gemini_client else "API_2"
+            print(f"[Gemini API] Trying {client_label} with model: {model_name}")
 
             if not can_thinking:
-                sys_instruct = None
-                if hasattr(config, "system_instruction"):
-                    sys_instruct = config.system_instruction
+                # Thinking非対応モデル用の設定作成
+                sys_instruct = getattr(config, "system_instruction", None)
                 current_tools = getattr(config, "tools", None)
-
                 new_config = types.GenerateContentConfig(
                     tools=current_tools, system_instruction=sys_instruct
                 )
-
-                return await client.aio.models.generate_content(
+                return await target_client.aio.models.generate_content(
                     model=model_name, contents=contents, config=new_config
                 )
             else:
-                return await client.aio.models.generate_content(
+                # そのまま実行
+                return await target_client.aio.models.generate_content(
                     model=model_name, contents=contents, config=config
                 )
 
         except Exception as e:
             error_str = str(e)
-            err_type = type(e).__name__
-            print(f"[X] {model_name}: {err_type}")
+            print(f"[X] {model_name} ({client_label}) failed: {type(e).__name__}")
+            last_exception = e
 
-            if (
-                gemini_client_fallback
-                and _should_try_fallback_key(e, error_str)
-                and not used_fallback_key
-            ):
-                print("[~] Trying KEY_2...")
-                used_fallback_key = True
-                try:
-                    if not can_thinking:
-                        sys_instruct = None
-                        if hasattr(config, "system_instruction"):
-                            sys_instruct = config.system_instruction
-                        current_tools = getattr(config, "tools", None)
-                        new_config = types.GenerateContentConfig(
-                            tools=current_tools, system_instruction=sys_instruct
-                        )
-                        return await gemini_client_fallback.aio.models.generate_content(
-                            model=model_name, contents=contents, config=new_config
-                        )
-                    else:
-                        return await gemini_client_fallback.aio.models.generate_content(
-                            model=model_name, contents=contents, config=config
-                        )
-                except Exception as e2:
-                    print(f"[X] KEY_2 failed: {type(e2).__name__}")
-
+            # リトライ可能か判定
             is_retryable = (
                 isinstance(e, TimeoutError)
                 or "429" in error_str
@@ -122,18 +109,18 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             )
 
             if is_retryable:
-                if isinstance(e, TimeoutError) or _is_timeout_error(error_str):
-                    print("[~] Retry in 1s...")
-                    await asyncio.sleep(1)
-                elif "503" in error_str or "UNAVAILABLE" in error_str:
-                    print("[~] Overloaded, wait 2s...")
+                # 次のステップへ行く前に少し待機
+                if "503" in error_str or "UNAVAILABLE" in error_str:
                     await asyncio.sleep(2)
-
-                if model_name == models_to_try[-1][0]:
-                    raise e
+                else:
+                    await asyncio.sleep(1)
                 continue
             else:
+                # 致命的なエラーは即終了
                 raise e
+
+    # 全プラン失敗時
+    raise last_exception or Exception("All models and keys failed.")
 
 
 def generate_content_safe(
