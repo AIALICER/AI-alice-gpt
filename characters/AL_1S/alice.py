@@ -10,16 +10,23 @@ Environment Variables:
     GEN_API_KEY: Google Gemini API Key
 """
 
-import sys
 import os
+import sys
 
 # プロジェクトルートをパスに追加
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from common.bot_base import CharacterBot
 from characters import AL_1S
+from common.bot_base import CharacterBot
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--local", action="store_true")
+    parser.add_argument("-m", "--message")
+    args = parser.parse_args()
+
     bot = CharacterBot(
         character_name=AL_1S.config.CHARACTER_NAME,
         display_name=AL_1S.config.DISPLAY_NAME,
@@ -28,6 +35,6 @@ if __name__ == "__main__":
         discord_token_env=AL_1S.config.DISCORD_TOKEN_ENV,
         system_instruction_path=AL_1S.config.SYSTEM_INSTRUCTION_PATH,
         messages=AL_1S.messages,
-        special_commands=AL_1S.config.SPECIAL_COMMANDS
+        special_commands=AL_1S.config.SPECIAL_COMMANDS,
     )
-    bot.run()
+    bot.run(local=args.local, message=args.message)
