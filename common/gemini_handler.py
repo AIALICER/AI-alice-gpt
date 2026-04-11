@@ -61,7 +61,8 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
             [
                 (gemini_client_fallback, "gemini-3-flash-preview", True),  # 3. API2 + 3 Flash
                 (gemini_client_fallback, "gemini-3.1-flash-lite-preview", True),  # 4. API2 + Lite
-                (gemini_client_fallback, "gemini-2.0-flash", False),  # 5. API2 + 2.0 Flash
+                (gemini_client_fallback, "gemini-2.5-flash", False),  # 5. API2 + 2.5 Flash
+                (gemini_client_fallback, "gemini-2.0-flash", False),  # 6. API2 + 2.0 Flash
             ]
         )
     else:
