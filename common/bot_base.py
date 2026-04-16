@@ -10,6 +10,15 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+async def get_image_from_url(url):
+     import aiohttp
+     import io
+     """URLから画像バイナリを取得する"""
+     async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                return await resp.read()
+     return None
 from datetime import (  # datetime, timezone, timedeltaはそのまま使用
     datetime,
     timedelta,
@@ -1236,11 +1245,41 @@ class CharacterBot:
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
             url_context = ""
             if prompt:
-                with timer.measure_step("プロンプトURL処理"):
+                if "twitter.com" in prompt or "x.com" in prompt:
+                 
+                 await asyncio.sleep(3.5)  # Embed生成待ち
+                 message = await message.channel.fetch_message(message.id)
+
+                 if message.embeds:
+                  embed = message.embeds[0]
+                  tweet_text = embed.description or ""
+                  
+            # 🌟 プレビュー画像のURLを取得 (thumbnail か image に入っている)
+                 image_url = None
+                 if embed.image and embed.image.url:
+                  image_url = embed.image.url
+                 elif embed.thumbnail and embed.thumbnail.url:
+                  image_url = embed.thumbnail.url
+
+            # 画像がある場合はGeminiの入力リストに追加
+                 if image_url:
+                  image_data = await get_image_from_url(image_url)
+                  if image_data:
+                    # Geminiへの入力形式 (テキスト + 画像バイナリ)
+                    url_context = "ツイート内容"+tweet_text+"ツイートに添付された画像があります"
+                    twitter_part = types.Part.from_bytes(
+                        data=image_data,
+                        mime_type="image/jpeg"
+                    )
+                 else:
+                    url_context = "ツイート内容"+tweet_text
+                else:
+                 with timer.measure_step("プロンプトURL処理"):
                     url_contents = await url_handler.process_urls_in_text(prompt)
                     if url_contents:
                         url_context = url_handler.format_url_contents(url_contents)
-
+            print(url_context)
+            file_parts.append(twitter_part)
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
@@ -1260,7 +1299,6 @@ class CharacterBot:
             else:
                 timer.print_summary()
             return
-
     async def _process_gemini_request(
         self,
         message: discord.Message,
@@ -1622,7 +1660,6 @@ class CharacterBot:
             bot_response_text = self.messages.RESPONSE_FAILED
 
         return bot_response_text
-
     def _contains_partner_mention(self, text: str) -> bool:
         """応答に相方Botへのメンションが含まれるかチェック"""
         partner_id = getattr(self.messages, "PARTNER_BOT_ID", None)
@@ -1676,3 +1713,4 @@ class CharacterBot:
         elif is_manual:
             msg = self.messages.WIKI_ALREADY_READ.format(title=result["title"], link=result["url"])
             await target.send(msg)
+    
