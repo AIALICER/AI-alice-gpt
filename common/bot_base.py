@@ -1245,7 +1245,11 @@ class CharacterBot:
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
             url_context = ""
             if prompt:
-                if "twitter.com" in prompt or "x.com" in prompt:
+                twitter_url_pattern = r'https?://(?:direct\.)?(?:www\.)?(?:twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/\d+'
+
+# メッセージ内にパターンに一致するURLがあるか探す
+                match = re.search(twitter_url_pattern, prompt)
+                if match:
                  
                  await asyncio.sleep(3.5)  # Embed生成待ち
                  message = await message.channel.fetch_message(message.id)
@@ -1253,25 +1257,29 @@ class CharacterBot:
                  if message.embeds:
                   embed = message.embeds[0]
                   tweet_text = embed.description or ""
+                 else:
+                  embed= None
                   
             # 🌟 プレビュー画像のURLを取得 (thumbnail か image に入っている)
                  image_url = None
-                 if embed.image and embed.image.url:
-                  image_url = embed.image.url
-                 elif embed.thumbnail and embed.thumbnail.url:
-                  image_url = embed.thumbnail.url
+                 if embed:
+                  if embed.image and embed.image.url:
+                   image_url = embed.image.url
+                  elif embed.thumbnail and embed.thumbnail.url:
+                   image_url = embed.thumbnail.url
 
             # 画像がある場合はGeminiの入力リストに追加
-                 if image_url:
-                  image_data = await get_image_from_url(image_url)
-                  if image_data:
+                  if image_url:
+                   image_data = await get_image_from_url(image_url)
+                   if image_data:
                     # Geminiへの入力形式 (テキスト + 画像バイナリ)
                     url_context = "ツイート内容"+tweet_text+"ツイートに添付された画像があります"
                     twitter_part = types.Part.from_bytes(
                         data=image_data,
                         mime_type="image/jpeg"
                     )
-                 else:
+                    file_parts.append(twitter_part)
+                  else:
                     url_context = "ツイート内容"+tweet_text
                 else:
                  with timer.measure_step("プロンプトURL処理"):
@@ -1279,7 +1287,8 @@ class CharacterBot:
                     if url_contents:
                         url_context = url_handler.format_url_contents(url_contents)
             print(url_context)
-            file_parts.append(twitter_part)
+            
+            
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
