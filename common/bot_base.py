@@ -10,15 +10,6 @@ import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-async def get_image_from_url(url):
-     import aiohttp
-     import io
-     """URLから画像バイナリを取得する"""
-     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.read()
-     return None
 from datetime import (  # datetime, timezone, timedeltaはそのまま使用
     datetime,
     timedelta,
@@ -33,7 +24,6 @@ from typing import Any, Callable, Dict, List, Optional, Set
 import discord
 from discord import app_commands
 from discord.ext import tasks  # @tasks.loop を使うために必要
-from google.genai import types
 
 # 日本標準時 (JST) の定義
 JST = timezone(timedelta(hours=9))
@@ -42,7 +32,7 @@ from . import (
     character_handler,
     db_handler,
     file_handler,
-    gemini_handler,
+    gemini_handler as gpt_handler,
     message_sender,
     news_handler,
     timer_handler,
@@ -53,8 +43,9 @@ from .config_base import (
     DISCORD_HISTORY_LIMIT,
     DISCORD_HISTORY_MAX_CHARS,
     ENABLE_DISCORD_HISTORY,
+    OPENAI_MODEL,
     USER_BIRTHDAY_CHANNEL_ID,
-    gemini_client,
+    gpt_async_client,
     get_db_path,
     init_database,
 )
@@ -315,7 +306,7 @@ class CharacterBot:
 
     async def _generate_birthday_message_user(self, display_name: str) -> str:
         """
-        ユーザー誕生日のお祝いメッセージをGemini APIで生成する。
+        ユーザー誕生日のお祝いメッセージをGPT APIで生成する。
         失敗した場合はフォールバックメッセージを返す。
         """
         fallback = getattr(
@@ -333,14 +324,11 @@ class CharacterBot:
             f"・他のキャラクターやユーザーへのメンション（@記号）は絶対に使わないこと"
         )
         try:
-            from google.genai import types
-
-            from .config_base import gemini_client
-
-            response = await gemini_client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(system_instruction=self.system_instruction),
+            response = await gpt_handler.generate_content_with_fallback(
+                client=gpt_async_client,
+                primary_model=OPENAI_MODEL,
+                contents=[{"role": "user", "content": prompt}],
+                config={"system_instruction": self.system_instruction, "max_output_tokens": 300},
             )
             return response.text.strip() if response and response.text else fallback
         except Exception as e:
@@ -349,7 +337,7 @@ class CharacterBot:
 
     async def _generate_birthday_message_ba(self, names: str) -> str:
         """
-        ブルアカキャラ誕生日の告知メッセージをGemini APIで生成する。
+        ブルアカキャラ誕生日の告知メッセージをGPT APIで生成する。
         失敗した場合はシンプルなメッセージを返す。
         """
         fallback = getattr(
@@ -365,14 +353,11 @@ class CharacterBot:
             f"絵文字を1〜2個含めてください。"
         )
         try:
-            from google.genai import types
-
-            from .config_base import gemini_client
-
-            response = await gemini_client.aio.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(system_instruction=self.system_instruction),
+            response = await gpt_handler.generate_content_with_fallback(
+                client=gpt_async_client,
+                primary_model=OPENAI_MODEL,
+                contents=[{"role": "user", "content": prompt}],
+                config={"system_instruction": self.system_instruction, "max_output_tokens": 220},
             )
             return response.text.strip() if response and response.text else fallback
         except Exception as e:
@@ -848,7 +833,7 @@ class CharacterBot:
                     print(
                         f"[{self.display_name}] 誕生日ユーザー: {display_name}, ID: {user_id}, mention={mention}"
                     )
-                    # Gemini APIでキャラクター風のメッセージを生成
+                    # GPT APIでキャラクター風のメッセージを生成
                     msg = await self._generate_birthday_message_user(display_name)
                     celebrated.append(f"{mention} ({display_name})")
                     birthday_messages.append(f"{mention}\n{msg}")
@@ -1268,17 +1253,10 @@ class CharacterBot:
                   elif embed.thumbnail and embed.thumbnail.url:
                    image_url = embed.thumbnail.url
 
-            # 画像がある場合はGeminiの入力リストに追加
+            # 画像がある場合はGPTの入力リストに追加
                   if image_url:
-                   image_data = await get_image_from_url(image_url)
-                   if image_data:
-                    # Geminiへの入力形式 (テキスト + 画像バイナリ)
                     url_context = "ツイート内容"+tweet_text+"ツイートに添付された画像があります"
-                    twitter_part = types.Part.from_bytes(
-                        data=image_data,
-                        mime_type="image/jpeg"
-                    )
-                    file_parts.append(twitter_part)
+                    file_parts.append({"type": "input_image", "image_url": image_url})
                   else:
                     url_context = "ツイート内容"+tweet_text
                 else:
@@ -1293,7 +1271,7 @@ class CharacterBot:
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
                 async with message.channel.typing():
-                    await self._process_gemini_request(
+                    await self._process_gpt_request(
                         message,
                         channel_id,
                         current_channel_id,
@@ -1308,7 +1286,7 @@ class CharacterBot:
             else:
                 timer.print_summary()
             return
-    async def _process_gemini_request(
+    async def _process_gpt_request(
         self,
         message: discord.Message,
         channel_id: int,
@@ -1321,7 +1299,7 @@ class CharacterBot:
         interaction: discord.Interaction = None,
         target_channel: discord.Thread = None,
     ) -> None:
-        """Gemini APIへのリクエストを処理（改善版計測）"""
+        """GPT APIへのリクエストを処理（改善版計測）"""
 
         if timer is None:
             timer = PerformanceTimer(self.display_name)
@@ -1337,7 +1315,7 @@ class CharacterBot:
             def get_history_func(ch_id, limit):
                 return db_handler.get_recent_history(self.db_path, ch_id, limit)
 
-            judgment = await gemini_handler.determine_level_and_search(
+            judgment = await gpt_handler.determine_level_and_search(
                 prompt=prompt if prompt else "",
                 channel_id=channel_id,
                 has_attachments=bool(file_parts),
@@ -1369,7 +1347,7 @@ class CharacterBot:
             if needs_search:
                 if not interaction:
                     await message.channel.send(self.messages.MSG_SEARCHING)
-                tools.append(types.Tool(google_search=types.GoogleSearch()))
+                tools.append({"type": "web_search_preview"})
 
             # タイマーの設定
             if timer_minutes != 0:
@@ -1391,10 +1369,11 @@ class CharacterBot:
                 syslog = f"\n\n[System info: Timer accepted for {timer_minutes} minutes. Please only report 'Acknowledged' and do not respond as if time has passed. Also, do not reference past conversation for this message.]"
 
             if prompt:
-                current_parts.append({"text": prompt + syslog})
+                current_parts.append({"type": "input_text", "text": prompt + syslog})
             elif is_empty_mention:
                 current_parts.append(
                     {
+                        "type": "input_text",
                         "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
                         + syslog
                     }
@@ -1496,10 +1475,13 @@ class CharacterBot:
                 if history:
                     history_texts: List[str] = []
                     for history_item in history[-8:]:
-                        for part in history_item.get("parts", []):
-                            text = part.get("text") if isinstance(part, dict) else None
-                            if text:
-                                history_texts.append(text)
+                        history_content = history_item.get("content", "")
+                        if isinstance(history_content, str):
+                            history_texts.append(history_content)
+                        elif isinstance(history_content, list):
+                            for part in history_content:
+                                if isinstance(part, dict) and part.get("type") == "input_text":
+                                    history_texts.append(part.get("text", ""))
 
                     if history_texts:
                         combined_history_text = "\n".join(history_texts)
@@ -1522,7 +1504,7 @@ class CharacterBot:
                         + url_parts_text
                     )
 
-            input_contents = history + [{"role": "user", "parts": current_parts}]
+            input_contents = history + [{"role": "user", "content": current_parts}]
             known_users_section = f"\n\n{known_users_info}" if known_users_info else ""
 
             enhanced_instruction = f"{self.system_instruction}{user_info}{known_users_section}\n\n[Current Japan Time]\n{current_jst}"
@@ -1541,17 +1523,18 @@ class CharacterBot:
                     + memories
                 )
 
-            current_config = types.GenerateContentConfig(
-                system_instruction=full_system_instruction,
-                tools=tools,
-                thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
-            )
+            current_config = {
+                "system_instruction": full_system_instruction,
+                "tools": tools,
+                "reasoning_level": thinking_level,
+                "max_output_tokens": 2000,
+            }
 
-            # Gemini API呼び出し
-            with timer.measure_step("Gemini API呼び出し"):
-                response = await gemini_handler.generate_content_with_fallback(
-                    client=gemini_client,
-                    primary_model="gemini-3.1-flash-lite-preview",
+            # GPT API呼び出し
+            with timer.measure_step("GPT API呼び出し"):
+                response = await gpt_handler.generate_content_with_fallback(
+                    client=gpt_async_client,
+                    primary_model=OPENAI_MODEL,
                     contents=input_contents,
                     config=current_config,
                 )
@@ -1581,7 +1564,7 @@ class CharacterBot:
                     db_handler.save_message,
                     self.db_path,
                     current_channel_id,
-                    "model",
+                    "assistant",
                     bot_response_text,
                 )
 
@@ -1622,34 +1605,18 @@ class CharacterBot:
             if response and hasattr(response, "text") and response.text:
                 bot_response_text = response.text
 
-            # 方法2: candidates.content.parts から取得
-            if (
-                not bot_response_text
-                and response
-                and hasattr(response, "candidates")
-                and response.candidates
-            ):
-                first_candidate = response.candidates[0]
-                if hasattr(first_candidate, "content") and first_candidate.content:
-                    if hasattr(first_candidate.content, "parts") and first_candidate.content.parts:
-                        parts_text = []
-                        for part in first_candidate.content.parts:
-                            if hasattr(part, "text") and part.text:
-                                parts_text.append(part.text)
-                        if parts_text:
-                            bot_response_text = "".join(parts_text)
-
             # 空レスポンス時のリトライ
             if not bot_response_text:
                 print(f"[{self.display_name}] Empty, retrying...")
-                retry_config = types.GenerateContentConfig(
-                    system_instruction=full_system_instruction,
-                    tools=tools,
-                    thinking_config=types.ThinkingConfig(thinking_level="minimal"),
-                )
-                retry_response = await gemini_handler.generate_content_with_fallback(
-                    client=gemini_client,
-                    primary_model="gemini-3.1-flash-lite-preview",
+                retry_config = {
+                    "system_instruction": full_system_instruction,
+                    "tools": tools,
+                    "reasoning_level": "minimal",
+                    "max_output_tokens": 1200,
+                }
+                retry_response = await gpt_handler.generate_content_with_fallback(
+                    client=gpt_async_client,
+                    primary_model=OPENAI_MODEL,
                     contents=input_contents,
                     config=retry_config,
                 )

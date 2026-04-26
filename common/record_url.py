@@ -1,14 +1,13 @@
 import re
 import sqlite3
-import asyncio
+
 import discord
 from typing import Any
 
-from google.genai import types
-from .config_base import gemini_client
+from .config_base import OPENAI_MODEL, gpt_async_client
 from . import url_handler
 from . import file_handler
-from . import gemini_handler
+from . import gemini_handler as gpt_handler
 
 
 
@@ -63,18 +62,16 @@ async def add_memory_with_context(
         f"{summary_input}"
     )
 
-    # 5. Geminiで「一行の記憶」を生成
+    # 5. GPTで「一行の記憶」を生成
     try:
-        config = types.GenerateContentConfig(
-            system_instruction="あなたは記憶整理の専門家です。簡潔な一行インデックスを作成してください。",
-            max_output_tokens=60
-        )
-        # 高速なモデル（flash）で実行
-        response = await gemini_handler.generate_content_with_fallback(
-            client=gemini_client,
-            primary_model='gemini-2.0-flash',
-            contents=[{"role": "user", "parts": [{"text": summary_prompt}]}],
-            config=config
+        response = await gpt_handler.generate_content_with_fallback(
+            client=gpt_async_client,
+            primary_model=OPENAI_MODEL,
+            contents=[{"role": "user", "content": summary_prompt}],
+            config={
+                "system_instruction": "あなたは記憶整理の専門家です。簡潔な一行インデックスを作成してください。",
+                "max_output_tokens": 80,
+            },
         )
         summary_text = response.text.strip() if hasattr(response, 'text') else "内容の解析に失敗しました"
     except Exception as e:
@@ -95,7 +92,7 @@ async def add_memory_with_context(
         print(f"[{display_name}] DB Store Error: {e}")
 async def find_best_memory_from_limited_list(query: str, limit: int, db_path: str):
     """
-    指定された件数(limit)の履歴をDBから取得し、Geminiにその中で最適な1件を選ばせる
+    指定された件数(limit)の履歴をDBから取得し、GPTにその中で最適な1件を選ばせる
     """
     
     # 1. 指定された件数(limit)分、最新の履歴を取得
@@ -117,17 +114,12 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
     if not memories:
         return None
 
-    # 2. Geminiに渡すためのリストを作成
+    # 2. GPTに渡すためのリストを作成
     memory_list_text = ""
     for m in memories:
         memory_list_text += f"ID: {m['id']} | 要約: {m['summary']} | 日時: {m['timestamp']}\n"
 
-    # 3. Geminiに「指定リストの中から最適解」を選ばせる
-    config = types.GenerateContentConfig(
-        system_instruction="あなたは記憶検索の専門家です。関連するIDを1つだけ抽出してください。",
-        max_output_tokens=20, # IDを答えるだけなので短くてOK
-        temperature=0.0       # 判定のブレをなくすため0に設定
-    )
+    # 3. GPTに「指定リストの中から最適解」を選ばせる
 
     judgement_prompt = (
         f"以下の履歴から、ユーザーのクエリ『{query}』に最も関連するIDを1つ選んで数字のみ回答してください。\n"
@@ -136,12 +128,15 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
     )
 
     try:
-        # --- 修正ポイント：引数に config=config を追加 ---
-        response = await gemini_handler.generate_content_with_fallback(
-            client=gemini_client,
-            primary_model='gemini-2.0-flash',
-            contents=[{"role": "user", "parts": [{"text": judgement_prompt}]}],
-            config=config  # 👈 これが足りなかった引数です！
+        response = await gpt_handler.generate_content_with_fallback(
+            client=gpt_async_client,
+            primary_model=OPENAI_MODEL,
+            contents=[{"role": "user", "content": judgement_prompt}],
+            config={
+                "system_instruction": "あなたは記憶検索の専門家です。関連するIDを1つだけ抽出してください。",
+                "max_output_tokens": 20,
+                "temperature": 0.0,
+            },
         )
         
         best_id_text = response.text.strip()
@@ -156,7 +151,7 @@ async def find_best_memory_from_limited_list(query: str, limit: int, db_path: st
         return next((m for m in memories if m['id'] == best_id), None)
 
     except Exception as e:
-        print(f"Gemini Judgement Error: {e}")
+        print(f"GPT Judgement Error: {e}")
         return None
 async def create_memory_thread(
     interaction: discord.Interaction, 
@@ -167,7 +162,7 @@ async def create_memory_thread(
     messages:Any
 
 ) -> None:
-    # 1. 検索実行（指定された limit 件の中から最高の一件を Gemini が選ぶ）
+    # 1. 検索実行（指定された limit 件の中から最高の一件を GPT が選ぶ）
     best_memory = await find_best_memory_from_limited_list(query, limit, db_path)
 
     # 2. スレッドの作成

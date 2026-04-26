@@ -1,14 +1,19 @@
 import asyncio
-import os
-import re
 import time
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from typing import Any
 
-from google.genai import types
+from .config_base import (
+    OPENAI_FALLBACK_MODEL,
+    OPENAI_MODEL,
+    gpt_async_client,
+    gpt_async_client_fallback,
+)
 
-# 日本標準時 (JST) の定義
-JST = timezone(timedelta(hours=9))
-from .config_base import gemini_client, gemini_client_fallback
+
+@dataclass
+class GPTResponse:
+    text: str
 
 
 def _is_timeout_error(error_str: str) -> bool:
@@ -38,119 +43,65 @@ def _should_try_fallback_key(e: Exception, error_str: str) -> bool:
     )
 
 
+async def _create_response_text(client: Any, model_name: str, contents: list, config: dict) -> str:
+    request_kwargs: dict[str, Any] = {
+        "model": model_name,
+        "input": contents,
+    }
+    if config.get("system_instruction"):
+        request_kwargs["instructions"] = config["system_instruction"]
+    if config.get("tools"):
+        request_kwargs["tools"] = config["tools"]
+    if config.get("temperature") is not None:
+        request_kwargs["temperature"] = config["temperature"]
+    if config.get("max_output_tokens") is not None:
+        request_kwargs["max_output_tokens"] = config["max_output_tokens"]
+
+    response = await client.responses.create(**request_kwargs)
+    return (response.output_text or "").strip()
+
+
 async def generate_content_with_fallback(client, primary_model: str, contents, config):
-    """
-    APIレートリミット/タイムアウト発生時に指定の順序で自動フォールバックする
-
-    試行順序:
-    1. APIキー1 + Gemini 3 Flash
-    2. APIキー1 + Gemini 3.1 Flash-Lite
-    3. APIキー2 + Gemini 3 Flash (課金枠)
-    4. APIキー2 + Gemini 3.1 Flash-Lite
-    5. APIキー2 + Gemini 2.0 Flash
-    """
-    # 実行プランの構築 (使用クライアント, モデル名, ThinkingConfig対応)
+    """レート制限/タイムアウト時に自動フォールバックしてGPT応答を返す。"""
     execution_plan = [
-        (gemini_client, "gemini-3-flash-preview", True),  # 1. API1 + 3 Flash
-        (gemini_client, "gemini-3.1-flash-lite-preview", True),  # 2. API1 + Lite
+        (gpt_async_client, OPENAI_MODEL),
+        (gpt_async_client, OPENAI_FALLBACK_MODEL),
     ]
-
-    # APIキー2が設定されている場合、課金枠のプランを追加
-    if gemini_client_fallback:
+    if gpt_async_client_fallback:
         execution_plan.extend(
             [
-                (gemini_client_fallback, "gemini-3-flash-preview", True),  # 3. API2 + 3 Flash
-                (gemini_client_fallback, "gemini-3.1-flash-lite-preview", True),  # 4. API2 + Lite
-                (gemini_client_fallback, "gemini-2.5-flash", False),  # 5. API2 + 2.5 Flash
-                (gemini_client_fallback, "gemini-2.0-flash", False),  # 6. API2 + 2.0 Flash
+                (gpt_async_client_fallback, OPENAI_MODEL),
+                (gpt_async_client_fallback, OPENAI_FALLBACK_MODEL),
             ]
         )
-    else:
-        # APIキー2がない場合のセーフティネット
-        execution_plan.append((gemini_client, "gemini-2.0-flash", False))
 
     last_exception = None
-
-    for target_client, model_name, can_thinking in execution_plan:
+    for target_client, model_name in execution_plan:
         try:
-            # クライアントの識別 (ログ用)
-            client_label = "API_1" if target_client == gemini_client else "API_2"
-            print(f"[Gemini API] Trying {client_label} with model: {model_name}")
-
-            if not can_thinking:
-                # Thinking非対応モデル用の設定作成
-                sys_instruct = getattr(config, "system_instruction", None)
-                current_tools = getattr(config, "tools", None)
-                new_config = types.GenerateContentConfig(
-                    tools=current_tools, system_instruction=sys_instruct
-                )
-                return await target_client.aio.models.generate_content(
-                    model=model_name, contents=contents, config=new_config
-                )
-            else:
-                # そのまま実行
-                return await target_client.aio.models.generate_content(
-                    model=model_name, contents=contents, config=config
-                )
-
+            client_label = "API_1" if target_client == gpt_async_client else "API_2"
+            print(f"[GPT API] Trying {client_label} with model: {model_name}")
+            text = await _create_response_text(target_client, model_name, contents, config)
+            return GPTResponse(text=text)
         except Exception as e:
             error_str = str(e)
             print(f"[X] {model_name} ({client_label}) failed: {type(e).__name__}")
             last_exception = e
-
-            # リトライ可能か判定
             is_retryable = (
                 isinstance(e, TimeoutError)
                 or "429" in error_str
-                or "RESOURCE_EXHAUSTED" in error_str
                 or "503" in error_str
                 or "UNAVAILABLE" in error_str
                 or "overloaded" in error_str.lower()
                 or _is_timeout_error(error_str)
             )
-
             if is_retryable:
-                # 次のステップへ行く前に少し待機
                 if "503" in error_str or "UNAVAILABLE" in error_str:
                     await asyncio.sleep(2)
                 else:
                     await asyncio.sleep(1)
                 continue
-            else:
-                # 致命的なエラーは即終了
-                raise e
-
-    # 全プラン失敗時
-    raise last_exception or Exception("All models and keys failed.")
-
-
-def generate_content_safe(
-    client,
-    primary_model: str,
-    contents,
-    config,
-    fallback_model: str = "gemini-2.0-flash",
-):
-    try:
-        return client.models.generate_content(model=primary_model, contents=contents, config=config)
-    except Exception as e:
-        error_str = str(e)
-        if (
-            isinstance(e, TimeoutError)
-            or "429" in error_str
-            or "RESOURCE_EXHAUSTED" in error_str
-            or _is_timeout_error(error_str)
-        ):
-            print(f"[!] {primary_model} -> {fallback_model}")
-            sys_instruct = None
-            if hasattr(config, "system_instruction"):
-                sys_instruct = config.system_instruction
-            new_config = types.GenerateContentConfig(system_instruction=sys_instruct)
-            return client.models.generate_content(
-                model=fallback_model, contents=contents, config=new_config
-            )
-        else:
             raise e
+    raise last_exception or Exception("All models and keys failed.")
 
 
 def determine_level_and_search_rule_based(prompt: str):
@@ -265,14 +216,14 @@ async def determine_level_and_search(
     history = []
     if get_recent_history_func:
         history = get_recent_history_func(channel_id, limit=4)
-    print(f"[GEMINI] [TIMING] ルーター用履歴取得: {time.time() - step_start:.2f}秒")
+        print(f"[GPT] [TIMING] ルーター用履歴取得: {time.time() - step_start:.2f}秒")
 
     history_text = ""
     if history:
         history_lines = []
         for msg in history:
             role = "User" if msg["role"] == "user" else character_name
-            text = msg["parts"][0]["text"] if msg["parts"] else ""
+            text = msg.get("content", "")
             if text is None:
                 text = ""
             if len(text) > 100:
@@ -314,17 +265,13 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
 
     try:
         step_start = time.time()
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
-            model="gemini-3.1-flash-lite-preview",
-            contents=router_prompt,
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level="minimal"),
-                max_output_tokens=30,
-                temperature=0.1,
-            ),
+        response = await generate_content_with_fallback(
+            client=gpt_async_client,
+            primary_model=OPENAI_MODEL,
+            contents=[{"role": "user", "content": router_prompt}],
+            config={"max_output_tokens": 60, "temperature": 0.1},
         )
-        print(f"[GEMINI] [TIMING] ルーターAPI呼び出し: {time.time() - step_start:.2f}秒")
+        print(f"[GPT] [TIMING] ルーターAPI呼び出し: {time.time() - step_start:.2f}秒")
 
         result = response.text.strip().lower()
         level, search, minutes, task, reference = "medium", False, 0, "null", False

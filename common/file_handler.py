@@ -6,20 +6,19 @@
 """
 
 import aiohttp
-from google.genai import types
 
-from .config_base import gemini_client
+from .config_base import OPENAI_MODEL, gpt_client
 
 
 async def process_attachments(attachments) -> list:
     """
-    Discordの添付ファイルを処理してGemini APIで使える形式に変換
+    Discordの添付ファイルを処理してGPT API入力形式に変換
 
     Args:
         attachments: Discord添付ファイルのリスト
 
     Returns:
-        list: types.Part オブジェクトのリスト
+        list: OpenAI Responses API content item のリスト
     """
     parts = []
 
@@ -53,9 +52,21 @@ async def process_attachments(attachments) -> list:
                         ]:
                             mime_type = "text/plain"
 
-                        # Part型に変換
-                        part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
-                        parts.append(part)
+                        if mime_type.startswith("image/"):
+                            parts.append({"type": "input_image", "image_url": attachment.url})
+                        else:
+                            try:
+                                text_content = file_bytes.decode("utf-8", errors="replace")
+                            except Exception:
+                                text_content = "(binary file attached)"
+                            if len(text_content) > 3000:
+                                text_content = text_content[:3000] + "...(truncated)"
+                            parts.append(
+                                {
+                                    "type": "input_text",
+                                    "text": f"[Attached file: {attachment.filename}]\n{text_content}",
+                                }
+                            )
                         print(f"File added: {attachment.filename} ({mime_type})")
         except Exception as e:
             print(f"File processing error ({attachment.filename}): {e}")
@@ -84,12 +95,17 @@ async def summarize_attachments(prompt: str, file_parts: list) -> str:
     )
 
     try:
-        summary_response = gemini_client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
-            contents=[prompt] + file_parts if prompt else file_parts,
-            config=types.GenerateContentConfig(system_instruction=summary_instruction),
+        input_items = []
+        if prompt:
+            input_items.append({"type": "input_text", "text": prompt})
+        input_items.extend(file_parts)
+        summary_response = gpt_client.responses.create(
+            model=OPENAI_MODEL,
+            input=[{"role": "user", "content": input_items}],
+            instructions=summary_instruction,
+            max_output_tokens=120,
         )
-        return f" [File summary: {summary_response.text.strip()}]"
+        return f" [File summary: {(summary_response.output_text or '').strip()}]"
     except Exception as e:
         print(f"Summary generation error: {e}")
         return " [File attached]"

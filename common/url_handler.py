@@ -205,7 +205,7 @@ async def process_urls_in_text(text: str) -> List[Dict[str, Any]]:
 
 def format_url_contents(url_contents: List[Dict[str, Any]]) -> str:
     """
-    URLコンテンツをGemini用にフォーマットする
+    URLコンテンツをGPT用にフォーマットする
     
     Args:
         url_contents: URLコンテンツのリスト

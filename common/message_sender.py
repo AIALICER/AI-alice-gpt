@@ -103,7 +103,7 @@ async def fetch_discord_history(
     include_attachments: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Discordチャンネルから直近のメッセージ履歴を取得し、Gemini API形式に変換
+    Discordチャンネルから直近のメッセージ履歴を取得し、GPT API形式に変換
     
     Args:
         channel: Discord channel object
@@ -113,7 +113,7 @@ async def fetch_discord_history(
         include_attachments: 添付ファイルを含めるかどうか
     
     Returns:
-        list: Gemini API形式の履歴リスト
+        list: GPT API形式の履歴リスト
     """
     try:
         messages = []
@@ -131,7 +131,7 @@ async def fetch_discord_history(
             if not has_content and not has_attachments:
                 continue
             
-            parts = []
+            content_items = []
             
             if has_content:
                 resolved_content = await resolve_mentions(msg)
@@ -140,18 +140,20 @@ async def fetch_discord_history(
                     resolved_content = resolved_content[:max_chars] + "...(truncated)"
                 
                 if bot_id and msg.author.id == bot_id:
-                    role = "model"
+                    role = "assistant"
                 else:
                     role = "user"
                     resolved_content = f"[{msg.author.display_name}] {resolved_content}"
                 
-                parts.append({"text": resolved_content})
+                content_items.append({"type": "input_text", "text": resolved_content})
             else:
                 if bot_id and msg.author.id == bot_id:
-                    role = "model"
+                    role = "assistant"
                 else:
                     role = "user"
-                    parts.append({"text": f"[{msg.author.display_name}] (file attached)"})
+                    content_items.append(
+                        {"type": "input_text", "text": f"[{msg.author.display_name}] (file attached)"}
+                    )
             
             # 添付ファイルの処理
             if include_attachments and has_attachments and attachment_count < MAX_HISTORY_ATTACHMENTS:
@@ -168,7 +170,7 @@ async def fetch_discord_history(
                     if image_attachments:
                         file_parts = await file_handler.process_attachments(image_attachments)
                         if file_parts:
-                            parts.extend(file_parts)
+                            content_items.extend(file_parts)
                             attachment_count += len(file_parts)
                             print(f"[Discord History] Added {len(file_parts)} attachments (msg ID: {msg.id})")
                 except asyncio.TimeoutError:
@@ -178,7 +180,7 @@ async def fetch_discord_history(
             
             messages.append({
                 "role": role,
-                "parts": parts,
+                "content": content_items,
                 "_msg_id": msg.id,
                 "_timestamp": msg.created_at
             })

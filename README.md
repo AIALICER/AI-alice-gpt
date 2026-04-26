@@ -1,6 +1,6 @@
 # 天童アリス Discord Bot
 
-ブルーアーカイブのキャラクターになりきって会話するDiscord Botです。Google Gemini APIを使用しています。
+ブルーアーカイブのキャラクターになりきって会話するDiscord Botです。OpenAI GPT APIを使用しています。
 
 ## 機能
 
@@ -25,7 +25,7 @@
 
 - Python 3.12以上
 - Discord Bot Token（キャラクターごとに必要）
-- Google Gemini API Key
+- OpenAI API Key
 
 ## 使い方
 
@@ -59,9 +59,9 @@ Botをメンションして会話を開始：
 
 ### 使用技術
 - **discord.py**: Discord API連携
-- **google-genai**: Google Gemini API連携
-  - メイン: Gemini 3 Flash Preview
-  - フォールバック: Gemini 2.5 Flash / 2.5 Flash Lite
+- **openai**: OpenAI GPT API連携
+  - メイン: `OPENAI_MODEL`（デフォルト: `gpt-4o-mini`）
+  - フォールバック: `OPENAI_FALLBACK_MODEL`（デフォルト: `gpt-4.1-mini`）
 - **aiohttp**: 非同期ファイル処理
 - **beautifulsoup4**: Webスクレイピング（ニュース取得）
 
@@ -94,7 +94,7 @@ python characters/AL_1S/alice.py
 Discord Botとして起動する前に、ローカル環境で直接会話をテストできます。
 
 **事前準備:**
-`.env` ファイルを作成し、**`GEN_API_KEY`**（Google Gemini APIキー）を最低限設定してください。
+`.env` ファイルを作成し、**`OPENAI_API_KEY`**（OpenAI APIキー）を最低限設定してください。
 ※ローカルテストモードでは Discord Token の設定は不要（空のままでも動作可能）です。
 
 **インタラクティブモード（対話形式）:**

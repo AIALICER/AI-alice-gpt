@@ -7,7 +7,7 @@ Usage:
 
 Environment Variables:
     DISCORD_TOKEN: アリス用Discord Bot Token
-    GEN_API_KEY: Google Gemini API Key
+    OPENAI_API_KEY: OpenAI API Key
 """
 
 import os

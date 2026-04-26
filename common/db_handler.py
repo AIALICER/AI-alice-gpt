@@ -9,7 +9,7 @@
 import sqlite3
 import asyncio
 from typing import Optional
-from .config_base import gemini_client
+from .config_base import OPENAI_MODEL, gpt_async_client
 
 
 def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
@@ -22,7 +22,7 @@ def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
         limit: 取得する履歴の件数
     
     Returns:
-        list: Gemini API形式の履歴リスト
+        list: GPT API形式の履歴リスト
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -41,12 +41,15 @@ def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
     rows = cursor.fetchall()
     conn.close()
     
-    # Gemini APIが受け取れる辞書リストに変換
+    # GPT APIが受け取れる辞書リストに変換
     history = []
     for row in rows:
+        role = row["role"]
+        if role == "model":
+            role = "assistant"
         history.append({
-            "role": row['role'],
-            "parts": [{"text": row['content']}]
+            "role": role,
+            "content": row["content"],
         })
     return history
 
@@ -151,11 +154,12 @@ async def generate_summary(old_memory: str, new_chat: list) -> str:
     - 3行程度の短い文章にまとめてください。
     """
     try:
-        summary_response = await gemini_client.aio.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
+        summary_response = await gpt_async_client.responses.create(
+            model=OPENAI_MODEL,
+            input=[{"role": "user", "content": prompt}],
+            max_output_tokens=200,
         )
-        return f" [Log summary: {summary_response.text.strip()}]"
+        return f" [Log summary: {(summary_response.output_text or '').strip()}]"
     except Exception as e:
         print(f"Summary generation error: {e}")
         return " [Summary failed]"
@@ -191,8 +195,8 @@ async def summarize_and_cleanup(db_path: str, channel_id: int) -> None:
         history = []
         for row in rows:
             history.append({
-                "role": row['role'],
-                "parts": [{"text": row['content']}]
+                "role": "assistant" if row["role"] == "model" else row["role"],
+                "content": row["content"],
             })
         
         # 現在の「記憶」を取得
@@ -205,7 +209,7 @@ async def summarize_and_cleanup(db_path: str, channel_id: int) -> None:
         old_memory_row = cursor.fetchone()
         old_memory = old_memory_row['content'] if old_memory_row else "No memories yet."
         
-        # Geminiで要約
+        # GPTで要約
         new_summary = await generate_summary(old_memory, history)
         
         # 記憶テーブルを更新
@@ -292,7 +296,7 @@ def get_all_users_info(db_path: str) -> str:
     """
     登録済み全ユーザーの情報をシステムインストラクション用テキストで返す
 
-    Gemini に「誰をどうメンションするか」を伝えるために使用する。
+    GPT に「誰をどうメンションするか」を伝えるために使用する。
     ユーザーが一人も登録されていない場合は空文字列を返す。
 
     Args:

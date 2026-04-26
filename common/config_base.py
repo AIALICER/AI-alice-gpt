@@ -3,16 +3,16 @@
 
 - 環境変数の読み込み
 - データベースパスの動的設定
-- Geminiクライアントの初期化
+- GPTクライアントの初期化
 - データベース初期化
 """
 
 import os
 import sqlite3
+
 import httpx
-from google import genai
-from google.genai import types
 from dotenv import load_dotenv
+from openai import AsyncOpenAI, OpenAI
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -50,51 +50,32 @@ DISCORD_HISTORY_LIMIT = 5  # Discordから取得するメッセージ数
 ENABLE_DISCORD_HISTORY = True  # Discord履歴読み込み機能の有効/無効
 DISCORD_HISTORY_MAX_CHARS = 500  # 1メッセージあたりの最大文字数
 
-# === Gemini API設定 ===
-GEN_API_KEY = os.getenv("GEN_API_KEY")
-GEN_API_KEY_2 = os.getenv("GEN_API_KEY_2")
+# === OpenAI API設定 ===
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY_2 = os.getenv("OPENAI_API_KEY_2")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_FALLBACK_MODEL = os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4.1-mini")
 
-# httpxクライアントを作成（60秒のタイムアウト）
+# 共通タイムアウト（60秒）
 httpx_timeout = httpx.Timeout(60.0, connect=60.0, read=60.0, write=60.0, pool=60.0)
-httpx_client_main = httpx.Client(timeout=httpx_timeout)
-httpx_client_fallback = httpx.Client(timeout=httpx_timeout)
-
-gemini_http_options = types.HttpOptions(
-    httpxClient=httpx_client_main,
-    retryOptions=types.HttpRetryOptions(
-        attempts=2,
-        initialDelay=0.5,
-        maxDelay=2.0,
-        expBase=2.0,
-        jitter=0.1,
-        httpStatusCodes=[429, 503]
-    )
-)
-
-gemini_http_options_fallback = types.HttpOptions(
-    httpxClient=httpx_client_fallback,
-    retryOptions=types.HttpRetryOptions(
-        attempts=2,
-        initialDelay=0.5,
-        maxDelay=2.0,
-        expBase=2.0,
-        jitter=0.1,
-        httpStatusCodes=[429, 503]
-    )
-)
 
 # メインクライアント（APIキー1）
-gemini_client = genai.Client(
-    api_key=GEN_API_KEY,
-    http_options=gemini_http_options
-)
+gpt_client = OpenAI(api_key=OPENAI_API_KEY, timeout=httpx_timeout, max_retries=2)
+gpt_async_client = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=httpx_timeout, max_retries=2)
 
 # フォールバッククライアント（APIキー2）
-gemini_client_fallback = None
-if GEN_API_KEY_2:
-    gemini_client_fallback = genai.Client(
-        api_key=GEN_API_KEY_2,
-        http_options=gemini_http_options_fallback
+gpt_client_fallback = None
+gpt_async_client_fallback = None
+if OPENAI_API_KEY_2:
+    gpt_client_fallback = OpenAI(
+        api_key=OPENAI_API_KEY_2,
+        timeout=httpx_timeout,
+        max_retries=2,
+    )
+    gpt_async_client_fallback = AsyncOpenAI(
+        api_key=OPENAI_API_KEY_2,
+        timeout=httpx_timeout,
+        max_retries=2,
     )
 
 
@@ -148,7 +129,7 @@ def init_database(db_path: str) -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT, -- 自動で増える通し番号
         channel_id INTEGER,                   -- チャンネルID
         user_id INTEGER,                      -- ユーザーID
-        summary TEXT,                         -- メッセージの要約（Geminiが作成）
+        summary TEXT,                         -- メッセージの要約（GPTが作成）
         message_link TEXT,                    -- Discordのメッセージリンク
         timestamp DATETIME DEFAULT (datetime('now', 'localtime')) -- 実行時の時刻
     )
@@ -184,6 +165,6 @@ def init_database(db_path: str) -> None:
 # デバッグ: 環境変数の読み込み確認
 if __name__ == "__main__":
     print("=== 環境変数デバッグ ===")
-    print(f"GEN_API_KEY: {'設定済み' if GEN_API_KEY else '未設定'}")
+    print(f"OPENAI_API_KEY: {'設定済み' if OPENAI_API_KEY else '未設定'}")
     print(f"DB_DIR: {DB_DIR}")
     print("=======================")
