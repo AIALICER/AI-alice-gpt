@@ -1,81 +1,65 @@
+# 無効化済み: このリポジトリ（AI-alice-gpt）の push で
+# 元サーバー /home/aosy/Docker/AI-Alice にデプロイしないため。
+# 再有効化する場合は on.push と jobs.deploy.if を戻すこと。
+
 name: Deploy to Server (Self-hosted)
 
 on:
-  push:
-    branches:
-      - main  # mainブランチにプッシュされたときに実行
-  workflow_dispatch:  # 手動実行も可能にする
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    runs-on: self-hosted  # Self-hosted runnerで実行
-    
+    if: false
+    runs-on: self-hosted
+
     steps:
       - name: Setup SSH for GitHub
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          # GitHubのホストキーをknown_hostsに追加
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
-      
+
       - name: Pull latest code
         run: |
           cd /home/aosy/Docker/AI-Alice
           git config --global --add safe.directory /home/aosy/Docker/AI-Alice
-          
-          # Gitユーザー設定（マージコミット用）
           git config --global user.email "github-actions@github.com"
           git config --global user.name "GitHub Actions"
-          
-          # Check current remote URL and update if needed
           current_url=$(git remote get-url origin)
           if [[ "$current_url" == https://* ]]; then
-            # Already HTTPS, just need to add token
             git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/Aosy0/AI-Alice.git"
           else
-            # SSH URL, rewrite to HTTPS with token
             git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
           fi
-          
-          # Fetch latest main branch
           git fetch origin main
-          
-          # Checkout main branch (create if not exists)
           git checkout main || git checkout -b main origin/main
-          
-          # Reset to origin/main to ensure clean state
           git reset --hard origin/main
-          
-          # Restore original URL (clean up)
           if [[ "$current_url" == https://* ]]; then
             git remote set-url origin "$current_url"
           else
             git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf
           fi
-      
+
       - name: Check compose file
         run: |
           cd /home/aosy/Docker/AI-Alice
           if [ ! -f compose.yaml ]; then
-            echo "⚠️  compose.yaml not found! Restoring from git history..."
+            echo "compose.yaml not found! Restoring from git history..."
             git show ece9f35:compose.yaml > compose.yaml
-            echo "✅ compose.yaml restored"
-          else
-            echo "✅ compose.yaml exists"
           fi
-      
+
       - name: Rebuild containers
         run: |
           cd /home/aosy/Docker/AI-Alice
           docker compose down
           docker compose up -d --build
-      
+
       - name: Show status
         run: |
-          echo "✅ Deployment completed at $(date)"
+          echo "Deployment completed at $(date)"
           cd /home/aosy/Docker/AI-Alice
           docker compose ps
