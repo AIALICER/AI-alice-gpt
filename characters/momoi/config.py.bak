@@ -1,0 +1,22 @@
+"""
+AIモモイ 固有の設定（character_creator により生成）
+"""
+
+import re
+from characters.bot_id_list import get_partner_info
+
+CHARACTER_NAME = "momoi"
+DISPLAY_NAME = "AIモモイ"
+
+COMMAND_PATTERN = re.compile(r'^[!！]AIモモイ[ 　\n]')
+HISTORY_CLEAR_COMMAND = "!AIモモイ 履歴消去"
+
+DISCORD_TOKEN_ENV = "MOMOI_DISCORD_TOKEN"
+
+SPECIAL_COMMANDS = {}
+
+SYSTEM_INSTRUCTION_PATH = "characters/momoi/system_instruction.txt"
+
+_partner = get_partner_info(CHARACTER_NAME)
+PARTNER_BOT_ID = _partner["bot_id"]
+PARTNER_BOT_NAME = _partner["display_name"]

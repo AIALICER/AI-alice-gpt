@@ -4,6 +4,8 @@ AL-1S (天童アリス) Discord Bot 起動スクリプト
 
 Usage:
     python AL-1S.py
+    python AL-1S.py -gpt-fallback
+    python AL-1S.py --local --model gpt-4o-mini
 
 Environment Variables:
     DISCORD_TOKEN: アリス用Discord Bot Token
@@ -18,14 +20,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from characters import AL_1S
 from common.bot_base import CharacterBot
+from common.bot_model_cli import parse_bot_run_args
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--local", action="store_true")
-    parser.add_argument("-m", "--message")
-    args = parser.parse_args()
+    args = parse_bot_run_args()
 
     bot = CharacterBot(
         character_name=AL_1S.config.CHARACTER_NAME,
@@ -37,4 +35,4 @@ if __name__ == "__main__":
         messages=AL_1S.messages,
         special_commands=AL_1S.config.SPECIAL_COMMANDS,
     )
-    bot.run(local=args.local, message=args.message)
+    bot.run(local=args.local, message=args.message, model_name=args.model_name)

@@ -11,6 +11,15 @@ from .config_base import (
 )
 
 
+class CharacterError(Exception):
+    """キャラクター別エラーメッセージを保持する例外クラス"""
+
+    def __init__(self, message: str, original_exception: Exception | None = None):
+        super().__init__(message)
+        self.original_exception = original_exception
+        self.character_message = message
+
+
 @dataclass
 class GPTResponse:
     text: str
@@ -61,7 +70,16 @@ async def _create_response_text(client: Any, model_name: str, contents: list, co
     return (response.output_text or "").strip()
 
 
-async def generate_content_with_fallback(client, primary_model: str, contents, config):
+async def generate_content_with_fallback(
+    client,
+    primary_model: str,
+    contents,
+    config,
+    needs_search: bool = False,
+    character_name: str = "alice",
+    *,
+    strict_primary_model: bool = False,
+):
     """レート制限/タイムアウト時に自動フォールバックしてGPT応答を返す。"""
     execution_plan = [
         (gpt_async_client, OPENAI_MODEL),
@@ -101,7 +119,17 @@ async def generate_content_with_fallback(client, primary_model: str, contents, c
                     await asyncio.sleep(1)
                 continue
             raise e
-    raise last_exception or Exception("All models and keys failed.")
+    from .error_messages import get_character_error_message
+
+    error_str = str(last_exception) if last_exception else ""
+    if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+        error_type = "quota"
+    elif _is_timeout_error(error_str):
+        error_type = "timeout"
+    else:
+        error_type = "default"
+    error_message = get_character_error_message(character_name, error_type)
+    raise CharacterError(error_message, last_exception)
 
 
 def determine_level_and_search_rule_based(prompt: str):

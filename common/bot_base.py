@@ -6,22 +6,28 @@ Discord Bot基盤クラス
 
 import asyncio
 import os
+import random
 import re
+import sys
 import time
+import traceback
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import (  # datetime, timezone, timedeltaはそのまま使用
-    datetime,
-    timedelta,
-    timezone,
+     datetime,
+     timedelta,
+     timezone,
 )
 from datetime import (
-    time as dt_time,  # timeクラスは別名でインポートして標準timeモジュールと区別
+     time as dt_time,  # timeクラスは別名でインポートして標準timeモジュールと区別
 )
 from time import perf_counter
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any
 
+import aiohttp
 import discord
+import requests
 from discord import app_commands
 from discord.ext import tasks  # @tasks.loop を使うために必要
 
@@ -31,24 +37,39 @@ from . import (
     birthday_handler,
     character_handler,
     db_handler,
+    error_messages,
     file_handler,
+    game_sale_handler,
     gemini_handler as gpt_handler,
+    github_issue_handler,
+    local_tester,
     message_sender,
     news_handler,
     timer_handler,
     url_handler,
 )
 from .config_base import (
-    BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
-    DISCORD_HISTORY_LIMIT,
-    DISCORD_HISTORY_MAX_CHARS,
-    ENABLE_DISCORD_HISTORY,
-    OPENAI_MODEL,
-    USER_BIRTHDAY_CHANNEL_ID,
-    gpt_async_client,
-    get_db_path,
-    init_database,
-)
+     BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
+     DISCORD_HISTORY_LIMIT,
+     DISCORD_HISTORY_MAX_CHARS,
+     ENABLE_DISCORD_HISTORY,
+     OPENAI_MODEL,
+     OPENAI_FALLBACK_MODEL,
+     USER_BIRTHDAY_CHANNEL_ID,
+     gpt_async_client,
+     get_db_path,
+     init_database,
+ )
+from characters.bot_id_list import BOT_REGISTRY
+
+
+async def get_image_from_url(url):
+    """URLから画像バイナリを取得する"""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                return await resp.read()
+    return None
 
 
 @dataclass
@@ -72,8 +93,8 @@ class PerformanceTimer:
     def __init__(self, display_name: str, print_results: bool = True):
         self.display_name = display_name
         self.print_results = print_results
-        self.timings: List[TimingData] = []
-        self.current_step: Optional[TimingData] = None
+        self.timings: list[TimingData] = []
+        self.current_step: TimingData | None = None
         self.total_start: float = 0.0
         self._step_counter = 0
 
@@ -134,11 +155,11 @@ class PerformanceTimer:
         print(f"合計時間: {total_duration:.3f}秒")
         print(f"[{self.display_name}] [TIMING] =================================\n")
 
-    def get_timings_dict(self) -> Dict[str, float]:
+    def get_timings_dict(self) -> dict[str, float]:
         """計測結果を辞書形式で取得（分析用）"""
         return {timing.step_name: timing.duration for timing in self.timings}
 
-    def get_slowest_step(self) -> Optional[TimingData]:
+    def get_slowest_step(self) -> TimingData | None:
         """最も遅いステップを取得"""
         if not self.timings:
             return None
@@ -169,7 +190,7 @@ class CharacterBot:
         discord_token_env: str,
         system_instruction_path: str,
         messages: Any,
-        special_commands: Optional[Dict[str, Callable]] = None,
+        special_commands: dict[str, Callable] | None = None,
     ):
         self.character_name = character_name
         self.display_name = display_name
@@ -177,11 +198,13 @@ class CharacterBot:
         self.history_clear_command = history_clear_command
         self.messages = messages
         self.special_commands = special_commands or {}
-        self.summary_tasks: Dict[int, asyncio.Task] = {}
+        self.summary_tasks: dict[int, asyncio.Task] = {}
 
         # Discordクライアントの設定
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.guild_reactions = True
+        intents.dm_reactions = True
         self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
 
@@ -191,18 +214,20 @@ class CharacterBot:
         # ブルアカ誕生日専用DBの初期化（全Bot共有）
         character_handler.init_birthday_db()
         # 全BotのIDセット（誕生日お祝い時のメンション除外用）
-        from characters.bot_id_list import BOT_REGISTRY
-
-        self._all_bot_ids: Set[int] = {
+        self._all_bot_ids: set[int] = {
             info["bot_id"] for info in BOT_REGISTRY.values() if info.get("bot_id") is not None
         }
 
+        from .good_example_handler import resolve_instruction_path
+
+        self.system_instruction_path = str(resolve_instruction_path(system_instruction_path))
+
         # システムインストラクションの読み込み
-        if os.path.exists(system_instruction_path):
-            with open(system_instruction_path, "r", encoding="utf-8") as f:
+        if os.path.exists(self.system_instruction_path):
+            with open(self.system_instruction_path, encoding="utf-8") as f:
                 self.system_instruction = f.read()
         else:
-            print(f"Warning: System instruction file not found at {system_instruction_path}")
+            print(f"Warning: System instruction file not found at {self.system_instruction_path}")
             self.system_instruction = ""
 
         # Discord Bot Tokenの取得
@@ -211,12 +236,12 @@ class CharacterBot:
             raise ValueError(f"Environment variable {discord_token_env} is not set")
 
         # アクティブなタイマーを管理
-        self.active_timers: Dict[int, List[Dict[str, Any]]] = {}
+        self.active_timers: dict[int, list[dict[str, Any]]] = {}
 
         # 処理済みメッセージIDの追跡（重複処理防止）
-        self._processed_message_ids: Set[int] = set()
-        self._message_id_timestamps: Dict[int, float] = {}
-        self._message_locks: Dict[int, asyncio.Lock] = {}
+        self._processed_message_ids: set[int] = set()
+        self._message_id_timestamps: dict[int, float] = {}
+        self._message_locks: dict[int, asyncio.Lock] = {}
 
     @tasks.loop(time=dt_time(hour=9, minute=0, tzinfo=JST))
     async def scheduled_wiki_check(self):
@@ -241,7 +266,7 @@ class CharacterBot:
         告知前に毎日ブルアカ誕生日データ（SchaleDB）のスクレイピングを実行する。
         """
         print(f"[{self.display_name}] 誕生日チェックを開始します")
-        today = datetime.now(JST)
+        datetime.now(JST)
         is_alice = self.character_name.lower() == "alice"
 
         # ========== ブルアカキャラ誕生日の更新（毎日） ==========
@@ -304,9 +329,73 @@ class CharacterBot:
         except Exception as e:
             print(f"[{self.display_name}] ユーザー誕生日チェックエラー: {e}")
 
+    @tasks.loop(time=dt_time(hour=18, minute=0, tzinfo=JST))
+    async def scheduled_game_sale_check(self):
+        """
+        毎日18時（日本時間）にTwitch人気ゲームのSteamセールをチェックして通知する。
+
+        - アリスのみ実行
+        - 新規セールがあれば BLUEARCHIVE_BIRTHDAY_CHANNEL_ID（お遊戯会）に通知
+        - セール終了後もDBから削除しない（notifiedフラグで重複防止）
+        """
+        if self.character_name.lower() != "alice":
+            return
+
+        print(f"[{self.display_name}] Steamセールチェックを開始します")
+
+        try:
+            db_path = "data/game_sales.db"
+
+            # DB更新 + 新規セール検出
+            new_sales = await asyncio.to_thread(
+                game_sale_handler.check_game_sales, db_path
+            )
+
+            if not new_sales:
+                print(f"[{self.display_name}] 新規セールはありませんでした")
+                return
+
+            print(f"[{self.display_name}] 新規セール {len(new_sales)} 件を検出しました")
+
+            # アリス口調のゲーム説明を生成
+            game_names = [sale["game_name"] for sale in new_sales]
+            descriptions = await game_sale_handler.generate_game_descriptions_with_gpt(game_names)
+
+            # セールメッセージ作成
+            message = game_sale_handler.create_sale_message(new_sales)
+
+            # 説明文を追加
+            lines = [message]
+            for sale in new_sales:
+                name = sale["game_name"]
+                desc = descriptions.get(name, "")
+                if desc:
+                    lines.append(f"\n**{name}**\n{desc}")
+
+            full_message = "\n".join(lines)
+            if len(full_message) > 2000:
+                full_message = full_message[:1997] + "..."
+
+            # 通知先チャンネル（お遊戯会）
+            channel = self.client.get_channel(BLUEARCHIVE_BIRTHDAY_CHANNEL_ID)
+            if channel:
+                await channel.send(full_message)
+                print(f"[{self.display_name}] セール通知を送信しました")
+            else:
+                print(f"[{self.display_name}] 通知先チャンネルが見つかりません")
+
+            # 通知済みにマーク
+            app_ids = [sale["steam_app_id"] for sale in new_sales]
+            await asyncio.to_thread(
+                game_sale_handler.mark_sales_notified, db_path, app_ids
+            )
+
+        except Exception as e:
+            print(f"[{self.display_name}] Steamセールチェックエラー: {e}")
+
     async def _generate_birthday_message_user(self, display_name: str) -> str:
         """
-        ユーザー誕生日のお祝いメッセージをGPT APIで生成する。
+        ユーザー誕生日のお祝いメッセージをGemini APIで生成する。
         失敗した場合はフォールバックメッセージを返す。
         """
         fallback = getattr(
@@ -357,7 +446,7 @@ class CharacterBot:
                 client=gpt_async_client,
                 primary_model=OPENAI_MODEL,
                 contents=[{"role": "user", "content": prompt}],
-                config={"system_instruction": self.system_instruction, "max_output_tokens": 220},
+                config={"system_instruction": self.system_instruction, "max_output_tokens": 300},
             )
             return response.text.strip() if response and response.text else fallback
         except Exception as e:
@@ -391,11 +480,16 @@ class CharacterBot:
                 return True
         return False
 
-    def run(self, local: bool = False, message: Optional[str] = None):
-        """Botを起動"""
-        if local or message:
-            from . import local_tester
+    def _conversation_model_name(self) -> str:
+        """会話で使う GPT モデル名（起動オプション未指定時は MAIN）。"""
+        return getattr(self, "test_model_name", None) or OPENAI_MODEL
 
+    def run(self, local: bool = False, message: str | None = None, model_name: str | None = None):
+        """Botを起動"""
+        if model_name is not None:
+            self.test_model_name = model_name
+        print(f"[{self.display_name}] GPT model: {self._conversation_model_name()}")
+        if local or message:
             if message:
                 asyncio.run(local_tester.run_single_shot(self, message))
             else:
@@ -412,6 +506,7 @@ class CharacterBot:
         async def on_ready():
             """Bot準備完了時の処理"""
             print(f"[{self.display_name}] Logged in as {self.client.user}")
+            print(f"[{self.display_name}] GPT model: {self._conversation_model_name()}")
             try:
                 command_names = [cmd.name for cmd in self.tree.get_commands()]
                 print(f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}")
@@ -441,6 +536,14 @@ class CharacterBot:
             if not self.scheduled_birthday_check.is_running():
                 self.scheduled_birthday_check.start()
 
+            # Steamセールチェックのスケジュールタスクを開始（アリスのみ）
+            if (
+                self.character_name.lower() == "alice"
+                and not self.scheduled_game_sale_check.is_running()
+            ):
+                self.scheduled_game_sale_check.start()
+                print(f"[{self.display_name}] Steamセールチェックタスクを開始しました")
+
             # 起動時にブルアカ誕生日DBが空ならスクレイピングを実行
             if (
                 self.character_name.lower() == "alice"
@@ -451,10 +554,50 @@ class CharacterBot:
                 )
                 asyncio.create_task(character_handler.async_scrape_and_update())
 
+            # GitHub Issue 用 Bot アカウントの確認（アリスのみ）
+            if self.character_name.lower() == "alice":
+                try:
+                    identity = await github_issue_handler.verify_bot_account()
+                    if identity.get("mode") == "app":
+                        print(
+                            f"[{self.display_name}] GitHub Issue: App="
+                            f"{identity.get('app_name')} (id={identity.get('app_id')}, "
+                            f"installation={identity.get('installation_id')})"
+                        )
+                    else:
+                        login = identity.get("login", "unknown")
+                        print(f"[{self.display_name}] GitHub Issue: PAT account=@{login}")
+                except github_issue_handler.GitHubBotConfigError as exc:
+                    print(f"[{self.display_name}] GitHub Issue: 未設定 — {exc}")
+
         @self.client.event
         async def on_message(message: discord.Message):
             """メッセージ受信時の処理"""
             await self._handle_message(message)
+
+        if self.character_name.lower() == "alice":
+
+            @self.client.event
+            async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+                """✅ / ❌ で会話例を保存（アリスのみ）"""
+                from . import good_example_handler
+
+                if payload.user_id == self.client.user.id:
+                    return
+                kind = good_example_handler.classify_feedback_emoji(payload.emoji)
+                if kind is None:
+                    return
+                emoji_repr = getattr(payload.emoji, "name", str(payload.emoji))
+                label = "✅" if kind == "good" else "❌"
+                print(
+                    f"[{self.display_name}] {label} リアクション検知 "
+                    f"(user={payload.user_id}, msg={payload.message_id}, emoji={emoji_repr!r})"
+                )
+                asyncio.create_task(self._handle_feedback_reaction(payload, kind))
+
+            print(
+                f"[{self.display_name}] 会話例保存（✅良い例 / ❌悪い例）を有効化しました"
+            )
 
         # タイマー設定スラッシュコマンド: /timer
         @self.tree.command(name="timer", description="タイマーを設定します")
@@ -519,8 +662,6 @@ class CharacterBot:
         @self.tree.command(name="dice", description="ダイスを振ります")
         @app_commands.describe(notation="ダイスの指定（例: 6, 2d6, 1d100）")
         async def dice_roll(interaction: discord.Interaction, notation: str):
-            import random
-
             notation = notation.lower().strip()
             match = re.match(r"^(\d+)(?:d(\d+))?$", notation)
 
@@ -567,14 +708,12 @@ class CharacterBot:
                 count_purple = 0
                 count_gold = 0
                 count_blue = 0
-                import random
-
                 list_result = []
                 ten_n = int(number / 10)
                 sin_n = number % 10
-                for j in range(ten_n):
+                for _j in range(ten_n):
                     list_result = []
-                    for i in range(10):
+                    for _i in range(10):
                         r = random.randint(1, 1000)
                         if r < 31:
                             result = "Purple"
@@ -586,18 +725,16 @@ class CharacterBot:
                             result = "blue"
                             count_blue = count_blue + 1
                         list_result.append(result)
-                    flag = 1
                     if "Purple" in list_result:
                         r = random.randint(1, 10)
-                        flag = 2
                         if r < 8:
-                            file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+                            file = discord.File("characters/AL_1S/assets/arisgatya2.jpg")
                             await interaction.channel.send(file=file, silent=True)
                         else:
-                            file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                            file = discord.File("characters/AL_1S/assets/arisgatya.jpg")
                             await interaction.channel.send(file=file, silent=True)
                     else:
-                        file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                        file = discord.File("characters/AL_1S/assets/arisgatya.jpg")
                         await interaction.channel.send(file=file, silent=True)
                     await asyncio.sleep(0.2)
                     purple_list = message_sender.get_gacha_names()
@@ -618,7 +755,7 @@ class CharacterBot:
                             await interaction.channel.send(random.choice(blue_list), silent=True)
                         await asyncio.sleep(0.1)
                 list_result = []
-                for i in range(sin_n):
+                for _i in range(sin_n):
                     r = random.randint(1, 1000)
                     if r < 31:
                         result = "Purple"
@@ -627,18 +764,16 @@ class CharacterBot:
                     else:
                         result = "blue"
                     list_result.append(result)
-                    flag = 1
                     if "Purple" in list_result:
                         r = random.randint(1, 10)
-                        flag = 2
                         if r < 8:
-                            file = discord.File("characters/AL_1S//assets/arisgatya2.jpg")
+                            file = discord.File("characters/AL_1S/assets/arisgatya2.jpg")
                             await interaction.channel.send(file=file, silent=True)
                         else:
-                            file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                            file = discord.File("characters/AL_1S/assets/arisgatya.jpg")
                             await interaction.channel.send(file=file, silent=True)
                     else:
-                        file = discord.File("characters/AL_1S//assets/arisgatya.jpg")
+                        file = discord.File("characters/AL_1S/assets/arisgatya.jpg")
                         await interaction.channel.send(file=file, silent=True)
                     await asyncio.sleep(0.2)
                     purple_list = message_sender.get_gacha_names()
@@ -732,8 +867,6 @@ class CharacterBot:
             )
             async def birthday_check(interaction: discord.Interaction):
                 await interaction.response.defer(ephemeral=True)
-
-                from datetime import datetime
 
                 today = datetime.now(JST)
                 today_str = f"{today.month:02d}-{today.day:02d}"
@@ -833,7 +966,7 @@ class CharacterBot:
                     print(
                         f"[{self.display_name}] 誕生日ユーザー: {display_name}, ID: {user_id}, mention={mention}"
                     )
-                    # GPT APIでキャラクター風のメッセージを生成
+                    # Gemini APIでキャラクター風のメッセージを生成
                     msg = await self._generate_birthday_message_user(display_name)
                     celebrated.append(f"{mention} ({display_name})")
                     birthday_messages.append(f"{mention}\n{msg}")
@@ -850,7 +983,7 @@ class CharacterBot:
 
                 # 実行者のみに見える簡易確認（処理完了通知）
                 await interaction.followup.send(
-                    f"✅ 誕生日のお祝いメッセージを送信しました", ephemeral=True
+                    "✅ 誕生日のお祝いメッセージを送信しました", ephemeral=True
                 )
 
         else:
@@ -996,6 +1129,126 @@ class CharacterBot:
         else:
             print(f"[{self.display_name}] データベースコマンド登録スキップ - アリス以外")
 
+        # ゲームセール通知スラッシュコマンド（アリスのみ）
+        if self.character_name == "alice":
+            # /twitch_top - Twitch で流行っているゲーム一覧
+            @self.tree.command(name="twitch_top", description="Twitch で流行っているゲーム一覧を表示します")
+            @app_commands.describe(limit="表示するゲーム数（1〜20、デフォルト: 10）")
+            async def twitch_top(interaction: discord.Interaction, limit: int = 10):
+                await interaction.response.defer()
+
+                if limit < 1:
+                    limit = 10
+                elif limit > 20:
+                    limit = 20
+
+                token = game_sale_handler.get_twitch_access_token()
+                if not token:
+                    await interaction.followup.send("⚠️ Twitch 認証に失敗しました")
+                    return
+
+                url = "https://api.twitch.tv/helix/games/top"
+                params = {"first": limit}
+                headers = {
+                    "Client-ID": os.getenv("TWITCH_CLIENT_ID"),
+                    "Authorization": f"Bearer {token}"
+                }
+
+                try:
+                    response = requests.get(url, params=params, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    games = data.get("data", [])
+                    if not games:
+                        await interaction.followup.send("🎮 現在人気のゲームを取得できませんでした")
+                        return
+
+                    game_names = [game.get("name", "不明") for game in games]
+                    descriptions = await game_sale_handler.generate_game_descriptions_with_gpt(game_names)
+
+                    lines = [f"🎮 **Twitch で流行っているゲーム Top {len(games)}**\n"]
+                    for i, game in enumerate(games, start=1):
+                        name = game.get("name", "不明")
+                        desc = descriptions.get(name, "")
+                        if desc:
+                            lines.append(f"**#{i} {name}**\n{desc}")
+                        else:
+                            lines.append(f"#{i} {name}")
+
+                    message = "\n\n".join(lines)
+                    if len(message) > 2000:
+                        message = message[:1997] + "..."
+
+                    await interaction.followup.send(message)
+
+                except Exception as e:
+                    print(f"[Twitch Top] エラー：{e}")
+                    await interaction.followup.send("⚠️ 取得中にエラーが発生しました")
+
+            # /steam_sales - Steam でセール中のゲームをチェック
+            @self.tree.command(name="steam_sales", description="Twitch 人気ゲームが Steam でセール中かチェックします")
+            async def steam_sales(interaction: discord.Interaction):
+                await interaction.response.defer()
+
+                db_path = "data/game_sales.db"
+                new_sales = game_sale_handler.check_game_sales(db_path)
+
+                if not new_sales:
+                    await interaction.followup.send("🎮 現在、Twitch 人気ゲームで Steam セール中のものはありません")
+                    return
+
+                game_names = [sale["game_name"] for sale in new_sales]
+                descriptions = await game_sale_handler.generate_game_descriptions_with_gpt(game_names)
+
+                lines = ["🎮 **Twitch 人気ゲームが Steam でセール中！** 🎮\n"]
+
+                for sale in new_sales:
+                    rank = sale["twitch_rank"]
+                    name = sale["game_name"]
+                    discount = sale["discount_percent"]
+                    original = game_sale_handler.format_price(sale["original_price"])
+                    final = game_sale_handler.format_price(sale["final_price"])
+                    url = sale["sale_url"]
+                    desc = descriptions.get(name, "")
+
+                    lines.append(f"**#{rank} {name}**")
+                    if desc:
+                        lines.append(f"{desc}")
+                    lines.append(f"割引率：{discount}% OFF")
+                    lines.append(f"価格：{original} → {final}")
+                    lines.append(f"URL: {url}\n")
+
+                message = "\n".join(lines)
+                if len(message) > 2000:
+                    message = message[:1997] + "..."
+
+                await interaction.followup.send(message)
+
+            # /issue - GitHub Issue作成（アリスのみ）
+            @self.tree.command(name="issue", description="GitHubにIssueを作成します")
+            @app_commands.describe(
+                title="Issueのタイトル",
+                body="Issueの内容（本文、省略可）",
+            )
+            async def issue_command(
+                interaction: discord.Interaction,
+                title: str,
+                body: str = "",
+            ):
+                await interaction.response.defer()
+                await self._confirm_and_create_issue(
+                    channel=interaction.channel,
+                    user=interaction.user,
+                    title=title,
+                    body=body,
+                    interaction=interaction,
+                )
+
+            print(f"[{self.display_name}] ゲームセール通知コマンドを登録しました")
+        else:
+            print(f"[{self.display_name}] ゲームセール通知コマンド登録スキップ - アリス以外")
+
         self.client.run(self.discord_token)
 
     async def _run_timer_with_countdown(
@@ -1062,6 +1315,53 @@ class CharacterBot:
         return "█" * filled + "░" * empty
 
     # ========== 並列処理用ヘルパーメソッド ==========
+
+    async def _handle_feedback_reaction(
+        self,
+        payload: discord.RawReactionActionEvent,
+        kind: "good_example_handler.FeedbackKind",
+    ) -> None:
+        """アリスのメッセージへの ✅ / ❌ を system_instruction に追記する。"""
+        from . import good_example_handler
+
+        try:
+            channel = self.client.get_channel(payload.channel_id)
+            if channel is None:
+                channel = await self.client.fetch_channel(payload.channel_id)
+            message = await channel.fetch_message(payload.message_id)
+            if message.author.id != self.client.user.id:
+                return
+
+            exchanges = await good_example_handler.collect_user_prompt_and_response(
+                channel,
+                message,
+                bot_user_id=self.client.user.id,
+                user_label="先生",
+                bot_label=self.display_name,
+            )
+            if not exchanges:
+                print(f"[{self.display_name}] 保存対象の会話が見つかりませんでした")
+                return
+
+            block = good_example_handler.format_example_block(exchanges, kind=kind)
+            ok, log_msg = await asyncio.to_thread(
+                good_example_handler.append_feedback_example,
+                self.system_instruction_path,
+                block,
+                kind=kind,
+                bot_label=self.display_name,
+            )
+            if ok:
+                self.system_instruction = await asyncio.to_thread(
+                    good_example_handler.load_system_instruction,
+                    self.system_instruction_path,
+                )
+            print(f"[{self.display_name}] {log_msg} -> {self.system_instruction_path}")
+        except Exception as exc:
+            import traceback
+
+            print(f"[{self.display_name}] Feedback reaction error: {exc}")
+            traceback.print_exc()
 
     async def _fetch_db_history(self, channel_id: int, limit: int) -> list:
         """DBから履歴を取得（並列処理用）"""
@@ -1208,6 +1508,15 @@ class CharacterBot:
                 channel_id = message.channel_mentions[0].id
                 prompt = prompt.replace(f"<#{channel_id}>", "")
 
+            # Issue作成リクエストの検出（アリスのみ）
+            if prompt and self.character_name.lower() == "alice":
+                if github_issue_handler.is_issue_request(prompt):
+                    await self._handle_issue_from_conversation(message, prompt)
+                    return
+                elif github_issue_handler.should_suggest_issue(prompt):
+                    await self._suggest_issue_from_conversation(message, prompt)
+                    return
+
             # プロンプトなしのメンションかどうか判定（@Bot のみ）
             is_empty_mention = self.client.user.mentioned_in(message) and not prompt
 
@@ -1228,45 +1537,95 @@ class CharacterBot:
                     )
 
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
+            import aiohttp
             url_context = ""
+            tiktok_context=""
+            youtube_cont = None
             if prompt:
                 twitter_url_pattern = r'https?://(?:direct\.)?(?:www\.)?(?:twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/\d+'
-
+                youtube_url_pattern = r'https?://(?:www\.)?(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})'
+                tiktok_url_pattern = r'https?://(?:[a-z]+\.)?tiktok\.com/(?:t/|@[a-zA-Z0-9._]+/video/|v/|@[a-zA-Z0-9._]+/)([a-zA-Z0-9]+)?'
 # メッセージ内にパターンに一致するURLがあるか探す
+                async def get_tiktok_oembed(url):
+                 async with aiohttp.ClientSession() as session:
+                  target_url = url
+        
+        # 🌟 TikTok Lite や 短縮URLの場合、oEmbedが失敗することがあるため
+        # 実際のリダイレクト先URLを取得して正規化する
+                  if "lite.tiktok.com" in url or "vm.tiktok.com" in url or "/t/" in url:
+                   try:
+                    async with session.head(url, allow_redirects=True, timeout=5) as head_resp:
+                     target_url = str(head_resp.url)
+                   except Exception as e:
+                    print(f"TikTok URL Normalization Error: {e}")
+                # 失敗しても元のURLで続行
+
+                  api_url = f"https://www.tiktok.com/oembed?url={target_url}"
+                  try:
+                   async with session.get(api_url) as response:
+                    if response.status == 200:
+                     data = await response.json()
+                     title = data.get('title', '無題の動画')
+                     author = data.get('author_name', '不明なユーザー')
+                     return f"TikTok動画タイトル: {title} (投稿者: {author})"
+                    else:
+                     # ステータスコードが200以外の場合（非公開設定など）
+                     print(f"TikTok oEmbed API returned status: {response.status}")
+                     return None
+                  except Exception as e:
+                    print(f"TikTok oEmbed Error: {e}")
+                    return None
+                youtube_cont=None
                 match = re.search(twitter_url_pattern, prompt)
+                youtube_match= re.search(youtube_url_pattern,prompt)
+                tiktok_match = re.search(tiktok_url_pattern, prompt)
+                if youtube_match:
+                    video_url = youtube_match.group(0)
+                    youtube_cont = {"type": "input_text", "text": f"[YouTube URL] {video_url}"}
+                    prompt = prompt.replace(video_url, "").strip()      
+                if tiktok_match:
+                 tiktok_url = tiktok_match.group(0)
+                 info = await get_tiktok_oembed(tiktok_url)
+                 if info:
+                  tiktok_context = f"\n【TikTok情報】\n{info}"
+                  # プロンプトからURLを削除して解析に回す
+                  prompt = prompt.replace(tiktok_url, "").strip()    
                 if match:
-                 
-                 await asyncio.sleep(3.5)  # Embed生成待ち
-                 message = await message.channel.fetch_message(message.id)
+                    await asyncio.sleep(3.5)  # Embed生成待ち
+                    message = await message.channel.fetch_message(message.id)
 
-                 if message.embeds:
-                  embed = message.embeds[0]
-                  tweet_text = embed.description or ""
-                 else:
-                  embed= None
-                  
-            # 🌟 プレビュー画像のURLを取得 (thumbnail か image に入っている)
-                 image_url = None
-                 if embed:
-                  if embed.image and embed.image.url:
-                   image_url = embed.image.url
-                  elif embed.thumbnail and embed.thumbnail.url:
-                   image_url = embed.thumbnail.url
+                    if message.embeds:
+                        embed = message.embeds[0]
+                        tweet_text = embed.description or ""
+                    else:
+                        embed = None
 
-            # 画像がある場合はGPTの入力リストに追加
-                  if image_url:
-                    url_context = "ツイート内容"+tweet_text+"ツイートに添付された画像があります"
-                    file_parts.append({"type": "input_image", "image_url": image_url})
-                  else:
-                    url_context = "ツイート内容"+tweet_text
+                    # 🌟 プレビュー画像のURLを取得 (thumbnail か image に入っている)
+                    image_url = None
+                    if embed:
+                        if embed.image and embed.image.url:
+                            image_url = embed.image.url
+                        elif embed.thumbnail and embed.thumbnail.url:
+                            image_url = embed.thumbnail.url
+
+                    # 画像がある場合はGeminiの入力リストに追加
+                    if image_url:
+                        image_data = await get_image_from_url(image_url)
+                        if image_data:
+                            # Geminiへの入力形式 (テキスト + 画像バイナリ)
+                            url_context = "ツイート内容" + tweet_text + "ツイートに添付された画像があります"
+                            file_parts.append({"type": "input_image", "image_url": image_url})
+                    else:
+                        url_context = "ツイート内容" + tweet_text
                 else:
                  with timer.measure_step("プロンプトURL処理"):
                     url_contents = await url_handler.process_urls_in_text(prompt)
                     if url_contents:
                         url_context = url_handler.format_url_contents(url_contents)
+            url_context = (url_context + tiktok_context).strip()
             print(url_context)
-            
-            
+
+
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
             if prompt or file_parts or is_empty_mention:
@@ -1277,6 +1636,7 @@ class CharacterBot:
                         current_channel_id,
                         prompt,
                         file_parts,
+                        youtube_cont,
                         is_empty_mention,
                         url_context,
                         timer,
@@ -1289,10 +1649,11 @@ class CharacterBot:
     async def _process_gpt_request(
         self,
         message: discord.Message,
-        channel_id: int,
+        channel_id: int,        
         current_channel_id: int,
         prompt: str,
         file_parts: list,
+        google_link: dict | None,
         is_empty_mention: bool = False,
         url_context: str = "",
         timer: PerformanceTimer = None,
@@ -1348,7 +1709,7 @@ class CharacterBot:
                 if not interaction:
                     await message.channel.send(self.messages.MSG_SEARCHING)
                 tools.append({"type": "web_search_preview"})
-
+            
             # タイマーの設定
             if timer_minutes != 0:
                 t_name = str(timer_name) if timer_name else "Timer"
@@ -1371,16 +1732,14 @@ class CharacterBot:
             if prompt:
                 current_parts.append({"type": "input_text", "text": prompt + syslog})
             elif is_empty_mention:
-                current_parts.append(
-                    {
-                        "type": "input_text",
-                        "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
+                current_parts.append({"type": "input_text", "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
                         + syslog
                     }
                 )
             if file_parts:
                 current_parts.extend(file_parts)
-
+            if google_link:
+                current_parts.append(google_link)
             # 並列処理開始
             parallel_timing = timer.measure_parallel_start("並列データ取得")
 
@@ -1473,7 +1832,7 @@ class CharacterBot:
             with timer.measure_step("履歴URL処理"):
                 history_url_context = ""
                 if history:
-                    history_texts: List[str] = []
+                    history_texts: list[str] = []
                     for history_item in history[-8:]:
                         history_content = history_item.get("content", "")
                         if isinstance(history_content, str):
@@ -1530,13 +1889,18 @@ class CharacterBot:
                 "max_output_tokens": 2000,
             }
 
-            # GPT API呼び出し
-            with timer.measure_step("GPT API呼び出し"):
+            # Gemini API 呼び出し
+            with timer.measure_step("GPT API 呼び出し"):
+                primary_model = self._conversation_model_name()
+                strict_model = getattr(self, "test_model_name", None) is not None
                 response = await gpt_handler.generate_content_with_fallback(
                     client=gpt_async_client,
-                    primary_model=OPENAI_MODEL,
+                    primary_model=primary_model,
                     contents=input_contents,
                     config=current_config,
+                    needs_search=needs_search,
+                    character_name=self.character_name,
+                    strict_primary_model=strict_model,
                 )
 
             # レスポンス抽出
@@ -1588,24 +1952,48 @@ class CharacterBot:
             # サマリー出力
             timer.print_summary()
 
+        except gpt_handler.CharacterError as e:
+            # キャラクター別エラーメッセージ
+            print(f"[{self.display_name}] CharacterError: {e.character_message}")
+            await message.channel.send(e.character_message)
         except Exception as e:
-            print(f"[{self.display_name}] Error: {e}")
-            error_msg = self.messages.ERR_REBOOT.format(error_detail=e)
+            exc_type, exc_value, exc_tb = sys.exc_info()
+            stack_trace = traceback.format_exception(exc_type, exc_value, exc_tb)
+            stack_trace_str = "".join(stack_trace)
+
+            print(f"\n[{self.display_name}] {'='*60}")
+            print(f"[{self.display_name}] エラーが発生しました")
+            print(f"[{self.display_name}] {'='*60}")
+            print(f"[{self.display_name}] エラータイプ：{type(e).__name__}")
+            print(f"[{self.display_name}] エラーメッセージ：{e}")
+            print(f"[{self.display_name}] 発生箇所：{exc_tb.tb_frame.f_code.co_filename}:{exc_tb.tb_lineno}")
+            print(f"[{self.display_name}] 関数名：{exc_tb.tb_frame.f_code.co_name}")
+            print(f"[{self.display_name}] {'='*60}")
+            print(f"[{self.display_name}] スタックトレース:")
+            print(stack_trace_str)
+            print(f"[{self.display_name}] {'='*60}\n")
+
+            # エラータイプを判定
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                error_type = "quota"
+            elif gpt_handler._is_timeout_error(error_str):
+                error_type = "timeout"
+            else:
+                error_type = "default"
+
+            # キャラクター別エラーメッセージを取得
+            error_msg = error_messages.get_character_error_message(self.character_name, error_type)
             await message.channel.send(error_msg)
 
     async def _extract_response_text(
         self, response, input_contents: list, full_system_instruction: str, tools: list
     ) -> str:
         """レスポンスからテキストを安全に抽出"""
-
         bot_response_text = None
-
         try:
-            # 方法1: response.text を直接取得
             if response and hasattr(response, "text") and response.text:
                 bot_response_text = response.text
-
-            # 空レスポンス時のリトライ
             if not bot_response_text:
                 print(f"[{self.display_name}] Empty, retrying...")
                 retry_config = {
@@ -1616,25 +2004,19 @@ class CharacterBot:
                 }
                 retry_response = await gpt_handler.generate_content_with_fallback(
                     client=gpt_async_client,
-                    primary_model=OPENAI_MODEL,
+                    primary_model=self._conversation_model_name(),
                     contents=input_contents,
                     config=retry_config,
                 )
                 if retry_response and hasattr(retry_response, "text") and retry_response.text:
                     bot_response_text = retry_response.text
-                else:
-                    print(f"[{self.display_name}] Retry failed")
-
             if not bot_response_text:
-                print(f"[{self.display_name}] Extract failed")
                 bot_response_text = self.messages.RESPONSE_FAILED
-
         except Exception as extract_error:
             print(
                 f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}"
             )
             bot_response_text = self.messages.RESPONSE_FAILED
-
         return bot_response_text
     def _contains_partner_mention(self, text: str) -> bool:
         """応答に相方Botへのメンションが含まれるかチェック"""
@@ -1642,6 +2024,161 @@ class CharacterBot:
         if not partner_id:
             return False
         return f"<@{partner_id}>" in text or f"<@!{partner_id}>" in text
+
+    async def _handle_issue_from_conversation(self, message: discord.Message, prompt: str) -> None:
+        """会話ベースのIssue作成処理"""
+        stripped = github_issue_handler.ISSUE_TRIGGER_PATTERN.sub("", prompt).strip().lstrip("：:　 ")
+        if not stripped:
+            await message.channel.send(self.messages.MSG_ISSUE_NO_CONTENT)
+            return
+
+        await message.channel.send(self.messages.MSG_ISSUE_ANALYZING)
+
+        gemini_prompt = (
+            "あなたはDiscord Botのキャラクターです。"
+            "ユーザーのメッセージからGitHub Issueのタイトルと本文を生成してください。\n"
+            "タイトルは簡潔かつ具体的に、本文は技術的な内容を記載してください。\n"
+            "あなたのキャラクターの口調を保ちつつ、Issueとして機能する内容にしてください。\n\n"
+            "以下のJSON形式のみを出力してください。コードブロックや余計なテキストは不要です。\n\n"
+            '{"title": "ここにタイトル", "body": "ここに本文"}\n\n'
+            "ユーザーメッセージ:\n"
+            f"{prompt}"
+        )
+
+        try:
+            response = await gpt_handler.generate_content_with_fallback(
+                client=gpt_async_client,
+                primary_model=OPENAI_FALLBACK_MODEL,
+                contents=[{"role": "user", "content": gemini_prompt}],
+                config={"system_instruction": self.system_instruction, "max_output_tokens": 800},
+            )
+        except Exception as e:
+            await message.channel.send(self.messages.MSG_ISSUE_GITHUB_ERROR.format(detail=str(e)))
+            return
+
+        if not response or not response.text:
+            await message.channel.send(self.messages.MSG_ISSUE_PARSE_ERROR)
+            return
+
+        import json
+        text = response.text.strip()
+        data = None
+        if "```" in text:
+            blocks = text.split("```")
+            for block in blocks:
+                block = block.strip()
+                if block.startswith("json"):
+                    block = block[4:]
+                try:
+                    data = json.loads(block)
+                    break
+                except json.JSONDecodeError:
+                    continue
+        else:
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                pass
+
+        if not data:
+            await message.channel.send(self.messages.MSG_ISSUE_PARSE_ERROR)
+            return
+
+        title = data.get("title", "")
+        body = data.get("body", "")
+
+        if not title:
+            await message.channel.send(self.messages.MSG_ISSUE_PARSE_ERROR)
+            return
+
+        await self._confirm_and_create_issue(
+            channel=message.channel,
+            user=message.author,
+            title=title,
+            body=body,
+        )
+
+    async def _suggest_issue_from_conversation(self, message: discord.Message, prompt: str) -> None:
+        """会話からIssue作成を提案（暗黙的トリガー用）"""
+        confirm_msg = self.messages.MSG_ISSUE_SUGGEST
+        sent = await message.channel.send(confirm_msg)
+        await sent.add_reaction("✅")
+        await sent.add_reaction("❌")
+
+        def check(reaction, user):
+            return (
+                user == message.author
+                and reaction.message.id == sent.id
+                and str(reaction.emoji) in ("✅", "❌")
+            )
+
+        try:
+            reaction, _ = await self.client.wait_for("reaction_add", timeout=60.0, check=check)
+            if str(reaction.emoji) == "✅":
+                await self._handle_issue_from_conversation(message, prompt)
+        except asyncio.TimeoutError:
+            await message.channel.send(self.messages.MSG_ISSUE_TIMEOUT)
+
+    async def _confirm_and_create_issue(
+        self,
+        channel: discord.TextChannel | discord.Thread,
+        user: discord.Member | discord.User,
+        title: str,
+        body: str,
+        interaction: discord.Interaction | None = None,
+    ) -> None:
+        """確認メッセージを表示しリアクションでIssue作成を制御"""
+        confirm_msg = self.messages.MSG_ISSUE_CONFIRM.format(title=title, body=body)
+
+        if interaction:
+            sent = await interaction.followup.send(confirm_msg)
+        else:
+            sent = await channel.send(confirm_msg)
+
+        await sent.add_reaction("✅")
+        await sent.add_reaction("❌")
+
+        def check(reaction, reaction_user):
+            return (
+                reaction_user == user
+                and reaction.message.id == sent.id
+                and str(reaction.emoji) in ("✅", "❌")
+            )
+
+        try:
+            reaction, _ = await self.client.wait_for("reaction_add", timeout=180.0, check=check)
+            if str(reaction.emoji) == "✅":
+                try:
+                    result = await github_issue_handler.create_github_issue(
+                        title,
+                        body,
+                        discord_user_name=user.display_name,
+                        discord_user_id=user.id,
+                    )
+                except github_issue_handler.GitHubBotConfigError as exc:
+                    msg = self.messages.MSG_ISSUE_GITHUB_ERROR.format(detail=str(exc))
+                    if interaction:
+                        await interaction.followup.send(msg)
+                    else:
+                        await channel.send(msg)
+                    return
+                msg = self.messages.MSG_ISSUE_CREATED.format(url=result["html_url"])
+                if interaction:
+                    await interaction.followup.send(msg)
+                else:
+                    await channel.send(msg)
+            else:
+                msg = self.messages.MSG_ISSUE_CANCELLED
+                if interaction:
+                    await interaction.followup.send(msg)
+                else:
+                    await channel.send(msg)
+        except asyncio.TimeoutError:
+            msg = self.messages.MSG_ISSUE_TIMEOUT
+            if interaction:
+                await interaction.followup.send(msg)
+            else:
+                await channel.send(msg)
 
     async def get_or_create_report_channel(self, guild, channel_name="wiki-更新通知"):
         """レポート用チャンネルを取得または作成"""
@@ -1679,8 +2216,8 @@ class CharacterBot:
                 await target.send(self.messages.WIKI_FAILED)
             return
 
-        title = result["title"]
-        link = result["url"]
+        result["title"]
+        result["url"]
         is_new = result["is_new"]
 
         if is_new:
@@ -1689,4 +2226,3 @@ class CharacterBot:
         elif is_manual:
             msg = self.messages.WIKI_ALREADY_READ.format(title=result["title"], link=result["url"])
             await target.send(msg)
-    

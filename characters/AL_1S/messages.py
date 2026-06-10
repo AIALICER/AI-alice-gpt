@@ -49,6 +49,8 @@ MSG_HELP = """📖 **コマンド一覧です、先生！**
   - `minutes`: 分 / `seconds`: 秒 / `task`: 内容
 - `/timers` — 現在動いているタイマーの一覧です。
 - `/dice` — ダイスを振ります。（例：`2d6`、`6`）
+- `/issue` — GitHubにIssueを作成します。
+  - `title`: タイトル / `body`: 内容（省略可）
 
 ---
 
@@ -86,3 +88,22 @@ WIKI_ALREADY_READ = (
     "「イベントミッションは終わりましたか？先生！」"
 )
 WIKI_FAILED = "先生、すみません。Wikiからイベント情報を読み取ることができませんでした。"
+
+# Issue作成関連
+MSG_ISSUE_ANALYZING = "メッセージを解析中です..."
+MSG_ISSUE_SUGGEST = "📋 その内容でIssueを作成しますか？\n✅ で作成手順に進む、❌ で閉じる"
+MSG_ISSUE_NO_CONTENT = (
+    "具体的な内容を教えてください！\n"
+    "例: 「!アリス Issue出して：ログイン画面でエラーが発生する」"
+)
+MSG_ISSUE_CONFIRM = (
+    "以下の内容でIssueを作成しますか？\n\n"
+    "**タイトル**: {title}\n\n"
+    "**内容**:\n{body}\n\n"
+    "✅ で作成、❌ でキャンセル"
+)
+MSG_ISSUE_CREATED = "✅ Issueを作成しました！\n{url}"
+MSG_ISSUE_CANCELLED = "❌ Issueの作成をキャンセルしました。"
+MSG_ISSUE_TIMEOUT = "⏰ タイムアウトしました。もう一度最初からやり直してください。"
+MSG_ISSUE_PARSE_ERROR = "メッセージの解析に失敗しました。もう一度送り直してください。"
+MSG_ISSUE_GITHUB_ERROR = "GitHub APIでエラーが発生しました。\n詳細: {detail}"

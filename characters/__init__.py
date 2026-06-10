@@ -7,6 +7,9 @@ characters - キャラクター設定パッケージ
 - AL_1S: 天童アリス
 - Key: ケイ
 - Yuka: ユウカ
+- momoi: モモイ
+- peroro: ペロロ
+- normal: ノーマル
 
 Bot IDの一元管理:
 - bot_id_list.py: 全キャラクターのDiscord Bot IDを管理

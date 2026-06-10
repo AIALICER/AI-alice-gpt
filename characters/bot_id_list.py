@@ -27,12 +27,27 @@ BOT_REGISTRY: dict = {
         "bot_id": 1468944602370277472,
         "display_name": "AIユウカ",
     },
+    "momoi": {
+        "bot_id": 1505918577411231804,
+        "display_name": "AIモモイ",
+    },
+    "peroro": {
+        "bot_id": 1509808752805806200,
+        "display_name": "ペロロ様",
+    },
+    "normal": {
+        "bot_id": None,
+        "display_name": "AIノーマル",
+    },
 }
 
 PARTNER_MAP: dict = {
     "alice": "kei",
     "kei": "alice",
     "yuka": "alice",
+    "momoi": None,
+    "peroro": None,
+    "normal": "alice",
 }
 
 
@@ -40,9 +55,8 @@ def get_partner_info(my_character_name: str) -> dict:
     """
     自分以外のBot情報を「相方リスト」として返す。
 
-    現在のシステムでは相方は1体を想定しているため、
-    自分以外の登録済みBot（bot_id が None でないもの）の中から
-    最初の1件を返す。
+    PARTNER_MAP に None が設定されている場合は相方なし。
+    未登録の場合は、自分以外の登録済み Bot の最初の1件を返す。
 
     Args:
         my_character_name: 自分のキャラクター名（例: "alice", "kei"）
@@ -51,11 +65,14 @@ def get_partner_info(my_character_name: str) -> dict:
         dict: {"bot_id": int, "display_name": str}
               相方が見つからない場合は {"bot_id": None, "display_name": ""}
     """
-    partner_name = PARTNER_MAP.get(my_character_name)
-    if partner_name:
+    if my_character_name in PARTNER_MAP:
+        partner_name = PARTNER_MAP[my_character_name]
+        if partner_name is None:
+            return {"bot_id": None, "display_name": ""}
         partner_info = BOT_REGISTRY.get(partner_name)
         if partner_info and partner_info.get("bot_id") is not None:
             return partner_info
+        return {"bot_id": None, "display_name": ""}
 
     for name, info in BOT_REGISTRY.items():
         if name != my_character_name and info.get("bot_id") is not None:

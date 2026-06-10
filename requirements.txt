@@ -4,3 +4,5 @@ aiohttp>=3.8.0
 python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0
+thefuzz[speedup]>=0.22.0
+PyJWT[crypto]>=2.8.0

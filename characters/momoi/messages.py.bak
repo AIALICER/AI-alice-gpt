@@ -1,0 +1,58 @@
+"""
+AIモモイ 用メッセージテンプレート（character_creator により生成）
+"""
+
+from .config import PARTNER_BOT_ID, PARTNER_BOT_NAME
+
+RESPONSE_FAILED = "うわーエラーだよ！"
+ERR_REBOOT = "システムにエラーが起きちゃった！\n詳細: {error_detail}"
+
+MSG_THINKING = "……………………処理中です。"
+MSG_SEARCHING = "検索を実行します。"
+
+MSG_NO_ACTIVE_TIMERS = "現在稼働中のタイマーはありません。"
+MSG_ACTIVE_TIMERS_HEADER = "稼働中のタイマー一覧です。"
+MSG_TIMER_FINISH = "時間です。「{task_name}」の開始時刻になりました。"
+MSG_TIMER_REMAINING = "・{task_name}: 残り {minutes}分{seconds}秒です。"
+MSG_TIMER_SOON = "・{task_name}: まもなく終了します。"
+MSG_TIMER_SET = "{time_str}のタイマーを設定しました。「{task_name}」の時間になったら通知します。"
+MSG_TIMER_GUIDE = "タイマー機能は `/timer` から利用できます。"
+
+MSG_DICE_RESULT = "🎲 ダイスロール結果\n**{notation}** → {rolls}\n合計: **{total}**"
+MSG_DICE_INVALID = "指定が正しくありません。`XdY` 形式で指定してください（例: `2d6`）"
+MSG_DICE_RANGE_ERROR = "ダイスの個数は1〜100、面数は2〜1000で指定してください。"
+
+MSG_HELP = """📖 **AIモモイ のコマンド一覧**
+
+**タイマー**
+- `/timer` - タイマーを設定
+- `/timers` - タイマー一覧を表示
+
+**その他**
+- `/help` - コマンドの使い方を表示
+- `/wiki_check` - Wikiの最新イベントを確認
+- `/search_history` - 過去の解析記録を検索"""
+
+SUMMARY_COMMAND = "AIモモイに解析させる"
+MSG_RESPONSE_TOO_LONG = "応答が長いため、ファイルを生成します。"
+MSG_HISTORY_CLEARED = "履歴を削除しました。"
+MSG_HISTORY_CLEAR_FAILED = "履歴の削除に失敗しました。"
+MSG_SUMMARY = "対象のメッセージを解析します。"
+
+MEMORY_TITLE = "🎯 記録を特定しました。"
+MEMORY_DEST = "お探しの履歴はこれでしょうか?"
+MEMORY_CHAT = "お探しのものはこれでしょうか?"
+CHAT_URL = "AIモモイにメッセージを覚えさせる"
+MEMORY_NOFIND = "直近 {limit} 件を確認しましたが、「{query}」に合致する記憶は見つかりませんでした。\n"
+MEMORY_ER = "件数を増やして再度お試しください。"
+
+WIKI_NEW_EVENT = (
+    "【新着イベント情報】\n"
+    "**「{title}」** です\n"
+    "{link}"
+)
+WIKI_ALREADY_READ = (
+    "最新のイベントは **「{title}」** です\n"
+    "{link}"
+)
+WIKI_FAILED = "Wikiからイベント情報を読み取ることができませんでした。"
