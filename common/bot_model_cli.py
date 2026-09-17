@@ -1,7 +1,7 @@
 """
 Discord Bot 起動時の GPT モデル指定（全キャラ共通）。
 
-既定: config_base.OPENAI_MODEL（オプション未指定時）
+既定: config_base.OPENAI_MODEL（未指定時は gpt-6-astra）
 オプション: --gpt-fallback でフォールバックモデルを使用
 任意指定: --model <モデル名>
 """
@@ -28,13 +28,13 @@ class BotRunArgs:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="AI-Alice Discord Bot",
+        description="AI-Alice Discord Bot (GPT / Astra)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "モデル例:\n"
             f"  （未指定）       → {OPENAI_MODEL}\n"
             f"  --gpt-fallback   → {OPENAI_FALLBACK_MODEL}\n"
-            f"  --model gpt-4o   → 任意のモデル名"
+            f"  --model gpt-6-astra  → 任意のモデル名"
         ),
     )
     parser.add_argument("--local", action="store_true", help="ローカルテストモード")

@@ -12,6 +12,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable
+from discord.ext import commands
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import (  # datetime, timezone, timedeltaはそのまま使用
@@ -45,8 +46,10 @@ from . import (
     local_tester,
     message_sender,
     news_handler,
+    rag_handler,
     timer_handler,
     url_handler,
+    vc_handler,
 )
 from .config_base import (
      BLUEARCHIVE_BIRTHDAY_CHANNEL_ID,
@@ -70,6 +73,17 @@ async def get_image_from_url(url):
             if resp.status == 200:
                 return await resp.read()
     return None
+
+
+def _extract_thoughts(response) -> list[str]:
+    thoughts = []
+    if response and hasattr(response, "candidates") and response.candidates:
+        first_candidate = response.candidates[0]
+        if hasattr(first_candidate, "content") and first_candidate.content:
+            for part in first_candidate.content.parts:
+                if getattr(part, "thought", False) and getattr(part, "text", None):
+                    thoughts.append(part.text)
+    return thoughts
 
 
 @dataclass
@@ -218,14 +232,15 @@ class CharacterBot:
             info["bot_id"] for info in BOT_REGISTRY.values() if info.get("bot_id") is not None
         }
 
-        from .good_example_handler import resolve_instruction_path
+        from .good_example_handler import build_system_instruction, resolve_instruction_path
 
         self.system_instruction_path = str(resolve_instruction_path(system_instruction_path))
 
-        # システムインストラクションの読み込み
+        # システムインストラクションの読み込み（本体 + DB 会話例）
         if os.path.exists(self.system_instruction_path):
-            with open(self.system_instruction_path, encoding="utf-8") as f:
-                self.system_instruction = f.read()
+            self.system_instruction = build_system_instruction(
+                self.system_instruction_path, self.db_path
+            )
         else:
             print(f"Warning: System instruction file not found at {self.system_instruction_path}")
             self.system_instruction = ""
@@ -237,6 +252,9 @@ class CharacterBot:
 
         # アクティブなタイマーを管理
         self.active_timers: dict[int, list[dict[str, Any]]] = {}
+
+        # ボイスチャンネル会話（/in_vc）
+        self.vc_handler: vc_handler.VCHandler | None = None
 
         # 処理済みメッセージIDの追跡（重複処理防止）
         self._processed_message_ids: set[int] = set()
@@ -501,7 +519,10 @@ class CharacterBot:
         # ギルド固有コマンド用サーバーID
         TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "751791380837171340")
         target_guild_id = int(TARGET_GUILD_ID) if TARGET_GUILD_ID else None
-
+        @self.client.event
+        async def on_voice_state_update(member, before, after):
+          if self.vc_handler is not None:
+           await self.vc_handler.on_voice_state_update(member, before, after)
         @self.client.event
         async def on_ready():
             """Bot準備完了時の処理"""
@@ -509,6 +530,8 @@ class CharacterBot:
             print(f"[{self.display_name}] GPT model: {self._conversation_model_name()}")
             try:
                 command_names = [cmd.name for cmd in self.tree.get_commands()]
+                print("tree object:", self.tree)
+                print("commands:", [cmd.name for cmd in self.tree.get_commands()])
                 print(f"[{self.display_name}] 登録済みコマンド: {', '.join(command_names)}")
                 print(f"[{self.display_name}] コマンドを同期します...")
 
@@ -554,21 +577,8 @@ class CharacterBot:
                 )
                 asyncio.create_task(character_handler.async_scrape_and_update())
 
-            # GitHub Issue 用 Bot アカウントの確認（アリスのみ）
-            if self.character_name.lower() == "alice":
-                try:
-                    identity = await github_issue_handler.verify_bot_account()
-                    if identity.get("mode") == "app":
-                        print(
-                            f"[{self.display_name}] GitHub Issue: App="
-                            f"{identity.get('app_name')} (id={identity.get('app_id')}, "
-                            f"installation={identity.get('installation_id')})"
-                        )
-                    else:
-                        login = identity.get("login", "unknown")
-                        print(f"[{self.display_name}] GitHub Issue: PAT account=@{login}")
-                except github_issue_handler.GitHubBotConfigError as exc:
-                    print(f"[{self.display_name}] GitHub Issue: 未設定 — {exc}")
+            # 既存テキスト履歴の埋め込みを少しずつ埋める（VC除く）
+            asyncio.create_task(self._backfill_rag_embeddings())
 
         @self.client.event
         async def on_message(message: discord.Message):
@@ -579,7 +589,7 @@ class CharacterBot:
 
             @self.client.event
             async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
-                """✅ / ❌ で会話例を保存（アリスのみ）"""
+                """👍 / 👎 で会話例を保存（アリスのみ）"""
                 from . import good_example_handler
 
                 if payload.user_id == self.client.user.id:
@@ -588,7 +598,7 @@ class CharacterBot:
                 if kind is None:
                     return
                 emoji_repr = getattr(payload.emoji, "name", str(payload.emoji))
-                label = "✅" if kind == "good" else "❌"
+                label = "👍" if kind == "good" else "👎"
                 print(
                     f"[{self.display_name}] {label} リアクション検知 "
                     f"(user={payload.user_id}, msg={payload.message_id}, emoji={emoji_repr!r})"
@@ -596,7 +606,7 @@ class CharacterBot:
                 asyncio.create_task(self._handle_feedback_reaction(payload, kind))
 
             print(
-                f"[{self.display_name}] 会話例保存（✅良い例 / ❌悪い例）を有効化しました"
+                f"[{self.display_name}] 会話例保存（thumbsup良い例 / thumbsdown悪い例）を有効化しました"
             )
 
         # タイマー設定スラッシュコマンド: /timer
@@ -657,7 +667,69 @@ class CharacterBot:
                 timers_dict=self.active_timers,
             )
             await interaction.response.send_message(status_message)
+        # ボイスチャンネル参加スラッシュコマンド: /in_vc
+        @self.tree.command(
+            name="in_vc",
+            description="VCに参加し、あなたの声に文字で返事します",
+        )
+        @app_commands.describe(
+            channel_name="参加するVC名（省略時はあなたが入っているVC）",
+        )
+        async def in_vc(
+            interaction: discord.Interaction,
+            channel_name: str | None = None,
+        ):
+            await interaction.response.defer()
+            if interaction.guild is None:
+                await interaction.followup.send("サーバー内でのみ使えます。")
+                return
 
+            channel: discord.VoiceChannel | None = None
+            if channel_name:
+                channel = discord.utils.get(
+                    interaction.guild.voice_channels, name=channel_name
+                )
+                if channel is None:
+                    await interaction.followup.send("その名前のVCはありません。")
+                    return
+            else:
+                member = interaction.guild.get_member(interaction.user.id)
+                if member is None or member.voice is None or member.voice.channel is None:
+                    await interaction.followup.send(
+                        "先にVCへ入るか、channel_name を指定してください。"
+                    )
+                    return
+                if not isinstance(member.voice.channel, discord.VoiceChannel):
+                    await interaction.followup.send("通常のボイスチャンネルのみ対応しています。")
+                    return
+                channel = member.voice.channel
+
+            if self.vc_handler is not None and self.vc_handler.connected:
+                await self.vc_handler.disconnect()
+
+            self.vc_handler = vc_handler.VCHandler(
+                self.client,
+                system_instruction=self.system_instruction,
+                display_name=self.display_name,
+                conversation_model=self._conversation_model_name(),
+                db_path=self.db_path,
+            )
+            await self.vc_handler.connect_channel(channel)
+            await interaction.followup.send(
+                f"**{channel.name}** に参加しました！\n"
+                "マイクで話して少し黙ると、アリスが Live API（ストリーミング）で聞いて"
+                "このVCのテキストチャットに文字で返事します。"
+            )
+
+        @self.tree.command(name="out_vc", description="ボイスチャンネルから退出します")
+        async def out_vc(interaction: discord.Interaction):
+            await interaction.response.defer()
+            if self.vc_handler is None or not self.vc_handler.connected:
+                await interaction.followup.send("今はVCにいません。")
+                return
+            await self.vc_handler.disconnect()
+            self.vc_handler = None
+            await interaction.followup.send("VCから退出しました。")
         # ダイスロールスラッシュコマンド: /dice
         @self.tree.command(name="dice", description="ダイスを振ります")
         @app_commands.describe(notation="ダイスの指定（例: 6, 2d6, 1d100）")
@@ -694,6 +766,77 @@ class CharacterBot:
                 result_message = f"🎲 {notation} の結果: {num_dice}個のダイス = **{total}**"
 
             await interaction.response.send_message(result_message)
+
+        @self.tree.command(
+            name="debug",
+            description="Gemini API パラメータを指定して単発テスト応答を得ます（開発用）",
+        )
+        @app_commands.describe(
+            prompt="ユーザープロンプト（空欄なら短い自己紹介テスト）",
+            model="モデル名（空欄なら通常の会話モデル）",
+            temperature="0.0〜2.0（空欄ならAPIデフォルト）",
+            max_output_tokens="最大出力トークン（空欄ならデフォルト）",
+            top_p="Top-p（空欄ならデフォルト）",
+            top_k="Top-k（空欄ならデフォルト）",
+            seed="乱数シード（空欄ならデフォルト）",
+            presence_penalty="Presence penalty（空欄ならデフォルト）",
+            frequency_penalty="Frequency penalty（空欄ならデフォルト）",
+            thinking_level="low/medium/high/minimal（空欄ならデフォルト）",
+            system_instruction="system_instruction 上書き（空欄ならキャラ既定）",
+            use_search="Google Search ツールを使う",
+            use_history="このチャンネルの直近DB履歴を付与",
+            use_rag="RAG 類似過去ログを system に付与",
+        )
+        async def debug_gpt(
+            interaction: discord.Interaction,
+            prompt: str = "",
+            model: str = "",
+            temperature: float | None = None,
+            max_output_tokens: int | None = None,
+            top_p: float | None = None,
+            top_k: int | None = None,
+            seed: int | None = None,
+            presence_penalty: float | None = None,
+            frequency_penalty: float | None = None,
+            thinking_level: str = "",
+            system_instruction: str = "",
+            use_search: bool = False,
+            use_history: bool = False,
+            use_rag: bool = False,
+        ):
+            await interaction.response.defer(ephemeral=True)
+            try:
+                reply, params = await self._run_debug_gpt(
+                    interaction,
+                    prompt=prompt,
+                    model=model.strip() or None,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                    top_p=top_p,
+                    top_k=top_k,
+                    seed=seed,
+                    presence_penalty=presence_penalty,
+                    frequency_penalty=frequency_penalty,
+                    thinking_level=thinking_level.strip() or None,
+                    system_instruction=system_instruction.strip() or None,
+                    use_search=use_search,
+                    use_history=use_history,
+                    use_rag=use_rag,
+                )
+                header = "**/debug パラメータ**\n```\n" + params + "\n```\n**応答**\n"
+                body = reply or "(空の応答)"
+                message = header + body
+                if len(message) > 1900:
+                    message = message[:1900] + "\n...(truncated)"
+                await interaction.followup.send(message, ephemeral=True)
+            except gpt_handler.CharacterError as exc:
+                await interaction.followup.send(exc.character_message, ephemeral=True)
+            except Exception as exc:
+                print(f"[{self.display_name}] /debug error: {type(exc).__name__}: {exc}")
+                await interaction.followup.send(
+                    f"/debug エラー: {type(exc).__name__}: {exc}",
+                    ephemeral=True,
+                )
 
         @self.tree.command(name="gacha", description="ガチャシミュレータです")
         @app_commands.describe(
@@ -1319,9 +1462,9 @@ class CharacterBot:
     async def _handle_feedback_reaction(
         self,
         payload: discord.RawReactionActionEvent,
-        kind: "good_example_handler.FeedbackKind",
+        kind: str,
     ) -> None:
-        """アリスのメッセージへの ✅ / ❌ を system_instruction に追記する。"""
+        """アリスのメッセージへの 👍 / 👎 を DB に保存し system_instruction を再構築する。"""
         from . import good_example_handler
 
         try:
@@ -1343,20 +1486,21 @@ class CharacterBot:
                 print(f"[{self.display_name}] 保存対象の会話が見つかりませんでした")
                 return
 
-            block = good_example_handler.format_example_block(exchanges, kind=kind)
             ok, log_msg = await asyncio.to_thread(
-                good_example_handler.append_feedback_example,
-                self.system_instruction_path,
-                block,
+                good_example_handler.save_feedback_example,
+                self.db_path,
+                exchanges,
                 kind=kind,
                 bot_label=self.display_name,
+                discord_message_id=payload.message_id,
             )
             if ok:
                 self.system_instruction = await asyncio.to_thread(
-                    good_example_handler.load_system_instruction,
+                    good_example_handler.build_system_instruction,
                     self.system_instruction_path,
+                    self.db_path,
                 )
-            print(f"[{self.display_name}] {log_msg} -> {self.system_instruction_path}")
+            print(f"[{self.display_name}] {log_msg} -> {self.db_path}")
         except Exception as exc:
             import traceback
 
@@ -1382,6 +1526,192 @@ class CharacterBot:
         """記憶を取得（並列処理用）"""
         return await asyncio.to_thread(db_handler.get_memories, self.db_path, channel_id)
 
+    async def _fetch_rag_context(self, query: str) -> str:
+        """チャンネル/ユーザー横断の類似過去ログを取得（並列処理用）"""
+        if not query or not query.strip():
+            print(f"[{self.display_name}] RAG: skip (empty query)")
+            return ""
+        try:
+            hits = await asyncio.to_thread(rag_handler.search_related, self.db_path, query)
+            if not hits:
+                print(f"[{self.display_name}] RAG: 0 hits (query={query[:60]!r})")
+                return ""
+            print(f"[{self.display_name}] RAG: {len(hits)} hit(s) (query={query[:60]!r})")
+            for i, hit in enumerate(hits, 1):
+                who = hit.get("author_name") or hit.get("role") or "?"
+                text = (hit.get("content") or "").replace("\n", " ").strip()
+                if len(text) > 80:
+                    text = text[:80] + "..."
+                print(
+                    f"[{self.display_name}] RAG[{i}] "
+                    f"ch={hit.get('channel_id')} by={who} "
+                    f"score={hit.get('score', 0):.3f}: {text}"
+                )
+            return rag_handler.format_rag_context(hits)
+        except Exception as exc:
+            print(f"[{self.display_name}] RAG search error: {exc}")
+            return ""
+
+    async def _index_rag_after_save(
+        self,
+        *,
+        user_history_id: int,
+        model_history_id: int,
+        channel_id: int,
+        user_text: str,
+        model_text: str,
+        author_name: str | None,
+        user_id: int | None,
+    ) -> None:
+        """返答後にテキスト履歴を埋め込み索引へ追加（VCは rag_handler 側で除外）。"""
+        try:
+            user_ok = await asyncio.to_thread(
+                rag_handler.index_history_row,
+                self.db_path,
+                history_id=user_history_id,
+                channel_id=channel_id,
+                role="user",
+                content=user_text,
+                author_name=author_name,
+                user_id=user_id,
+            )
+            model_ok = await asyncio.to_thread(
+                rag_handler.index_history_row,
+                self.db_path,
+                history_id=model_history_id,
+                channel_id=channel_id,
+                role="model",
+                content=model_text,
+                author_name=None,
+                user_id=user_id,
+            )
+            print(
+                f"[{self.display_name}] RAG index: "
+                f"user={'ok' if user_ok else 'skip'} "
+                f"model={'ok' if model_ok else 'skip'} "
+                f"(history_id={user_history_id}/{model_history_id})"
+            )
+        except Exception as exc:
+            print(f"[{self.display_name}] RAG index error: {exc}")
+
+    async def _backfill_rag_embeddings(self) -> None:
+        """起動時に未索引テキストを少量バックフィルする。"""
+        try:
+            n = await asyncio.to_thread(
+                rag_handler.backfill_missing_embeddings, self.db_path
+            )
+            if n:
+                print(f"[{self.display_name}] RAG backfill indexed {n} rows")
+        except Exception as exc:
+            print(f"[{self.display_name}] RAG backfill error: {exc}")
+
+    async def _run_debug_gpt(
+        self,
+        interaction: discord.Interaction,
+        *,
+        prompt: str,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        seed: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        thinking_level: str | None = None,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+        use_history: bool = False,
+        use_rag: bool = False,
+    ) -> tuple[str, str]:
+        """
+        /debug 用の単発 GPT 呼び出し。
+        Returns: (応答テキスト, 使用パラメータの要約)
+        """
+        user_prompt = prompt.strip() if prompt else ""
+        if not user_prompt:
+            user_prompt = "（デバッグ: 短く自己紹介してください）"
+
+        model_name = (model or "").strip() or self._conversation_model_name()
+        sys_instruction = (system_instruction or "").strip() or self.system_instruction
+
+        if use_rag:
+            rag_ctx = await self._fetch_rag_context(user_prompt)
+            if rag_ctx:
+                sys_instruction = sys_instruction + "\n\n" + rag_ctx
+
+        contents: list[dict[str, Any]] = []
+        if use_history and interaction.channel_id:
+            history = await self._fetch_db_history(interaction.channel_id, 6)
+            contents.extend(history)
+
+        contents.append({"role": "user", "content": user_prompt})
+
+        config: dict[str, Any] = {"system_instruction": sys_instruction}
+        if temperature is not None:
+            config["temperature"] = temperature
+        if max_output_tokens is not None:
+            config["max_output_tokens"] = max_output_tokens
+        if top_p is not None:
+            config["top_p"] = top_p
+        if seed is not None:
+            config["seed"] = seed
+        if presence_penalty is not None:
+            config["presence_penalty"] = presence_penalty
+        if frequency_penalty is not None:
+            config["frequency_penalty"] = frequency_penalty
+
+        thinking = (thinking_level or "").strip().lower()
+        if thinking:
+            config["reasoning_level"] = thinking
+
+        tools: list[Any] = []
+        if use_search:
+            tools.append({"type": "web_search_preview"})
+        if tools:
+            config["tools"] = tools
+
+        param_lines = [
+            f"model={model_name}",
+            f"prompt={user_prompt[:120]}{'...' if len(user_prompt) > 120 else ''}",
+            f"temperature={temperature if temperature is not None else '(default)'}",
+            f"max_output_tokens={max_output_tokens if max_output_tokens is not None else '(default)'}",
+            f"top_p={top_p if top_p is not None else '(default)'}",
+            f"top_k={top_k if top_k is not None else '(default)'}",
+            f"seed={seed if seed is not None else '(default)'}",
+            f"presence_penalty={presence_penalty if presence_penalty is not None else '(default)'}",
+            f"frequency_penalty={frequency_penalty if frequency_penalty is not None else '(default)'}",
+            f"thinking_level={thinking if thinking else '(default)'}",
+            f"search={use_search}",
+            f"history={use_history} ({len(contents) - 1} prior turns)",
+            f"rag={use_rag}",
+            f"system_instruction={'custom' if (system_instruction or '').strip() else 'default'}",
+        ]
+        param_summary = "\n".join(param_lines)
+        print(f"[{self.display_name}] /debug params:\n{param_summary}")
+
+        strict_model = bool((model or "").strip())
+        response = await gpt_handler.generate_content_with_fallback(
+            client=gpt_async_client,
+            primary_model=model_name,
+            contents=contents,
+            config=config,
+            needs_search=use_search,
+            character_name=self.character_name,
+            strict_primary_model=strict_model,
+        )
+
+        for thought in _extract_thoughts(response):
+            print(f"[{self.display_name}] /debug [THINKING] {thought}")
+
+        reply = await self._extract_response_text(
+            response,
+            contents,
+            sys_instruction,
+            tools,
+        )
+        return reply, param_summary
+
     async def _fetch_user_info(self, author) -> dict:
         """ユーザー情報を取得（並列処理用）"""
         user_display_name = author.display_name
@@ -1400,6 +1730,10 @@ class CharacterBot:
 
         return {"user_info": user_info, "known_users_info": known_users_info}
 
+    async def _fetch_user_memory(self, user_id: int) -> str | None:
+        """ユーザー記憶を取得（並列処理用）"""
+        return await asyncio.to_thread(db_handler.get_user_memory, self.db_path, user_id)
+
     async def _fetch_japan_time(self) -> str:
         """日本時間を取得（並列処理用）"""
         return timer_handler.get_japan_time()
@@ -1414,6 +1748,16 @@ class CharacterBot:
         """メッセージハンドラ（メインロジック）"""
         # 自分自身のメッセージは無視
         if message.author == self.client.user:
+            return
+
+        # VCテキストチャット会話（参加中のボイスチャンネル宛て）
+        if (
+            self.vc_handler is not None
+            and self.vc_handler.connected
+            and self.vc_handler.is_voice_text_channel(message.channel)
+            and not message.author.bot
+        ):
+            await self.vc_handler.handle_text_message(message)
             return
 
         # メッセージIDによる重複チェック
@@ -1481,6 +1825,9 @@ class CharacterBot:
             timer = PerformanceTimer(self.display_name)
             timer.start_total()
 
+            print(f"\n[{self.display_name}] {'='*60}")
+            print(f"[{self.display_name}] 応答開始: ID={message_id}")
+
             # ユーザー情報をDBに自動登録（upsert）
             with timer.measure_step("ユーザー情報登録"):
                 await asyncio.to_thread(
@@ -1536,6 +1883,20 @@ class CharacterBot:
                         message.attachments[:max_attachments]
                     )
 
+            recent_context = None
+            if is_empty_mention:
+                last_msg = await message_sender.fetch_last_user_message(
+                    message.channel, self.client.user.id
+                )
+                if last_msg:
+                    if last_msg.get("file_parts"):
+                        file_parts.extend(last_msg["file_parts"])
+                    recent_context = {
+                        "text": last_msg.get("text", ""),
+                        "file_parts": last_msg.get("file_parts", []),
+                        "author_name": last_msg.get("author_name", ""),
+                    }
+
             # URLの処理（メッセージと履歴からURLを抽出してコンテンツを取得）
             import aiohttp
             url_context = ""
@@ -1560,29 +1921,55 @@ class CharacterBot:
                     print(f"TikTok URL Normalization Error: {e}")
                 # 失敗しても元のURLで続行
 
-                  api_url = f"https://www.tiktok.com/oembed?url={target_url}"
-                  try:
-                   async with session.get(api_url) as response:
-                    if response.status == 200:
-                     data = await response.json()
-                     title = data.get('title', '無題の動画')
-                     author = data.get('author_name', '不明なユーザー')
-                     return f"TikTok動画タイトル: {title} (投稿者: {author})"
-                    else:
-                     # ステータスコードが200以外の場合（非公開設定など）
-                     print(f"TikTok oEmbed API returned status: {response.status}")
-                     return None
-                  except Exception as e:
+                   api_url = f"https://www.tiktok.com/oembed?url={target_url}"
+                   try:
+                    async with session.get(api_url) as response:
+                     if response.status == 200:
+                      data = await response.json()
+                      title = data.get('title', '無題の動画')
+                      author = data.get('author_name', '不明なユーザー')
+                      return f"TikTok動画タイトル: {title} (投稿者: {author})"
+                     else:
+                      # ステータスコードが200以外の場合（非公開設定など）
+                      print(f"TikTok oEmbed API returned status: {response.status}")
+                      return None
+                   except Exception as e:
                     print(f"TikTok oEmbed Error: {e}")
                     return None
-                youtube_cont=None
+
+                async def get_youtube_oembed(video_id: str):
+                    from urllib.parse import quote
+
+                    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+                    encoded_url = quote(canonical_url, safe="")
+                    api_url = f"https://www.youtube.com/oembed?url={encoded_url}&format=json"
+                    async with aiohttp.ClientSession() as session:
+                        try:
+                            async with session.get(api_url) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    title = data.get('title', '無題の動画')
+                                    author = data.get('author_name', '不明な投稿者')
+                                    return f"タイトル: {title}\n投稿者: {author}"
+                                else:
+                                    print(f"YouTube oEmbed API returned status: {response.status}")
+                                    return None
+                        except Exception as e:
+                            print(f"YouTube oEmbed Error: {e}")
+                            return None
+                youtube_cont = None
                 match = re.search(twitter_url_pattern, prompt)
-                youtube_match= re.search(youtube_url_pattern,prompt)
+                youtube_match = re.search(youtube_url_pattern, prompt)
                 tiktok_match = re.search(tiktok_url_pattern, prompt)
                 if youtube_match:
+                    video_id = youtube_match.group(1)
                     video_url = youtube_match.group(0)
-                    youtube_cont = {"type": "input_text", "text": f"[YouTube URL] {video_url}"}
-                    prompt = prompt.replace(video_url, "").strip()      
+                    prompt = prompt.replace(video_url, "").strip()
+                    youtube_info = await get_youtube_oembed(video_id)
+                    if youtube_info:
+                        url_context += f"\n【YouTube動画】\n{youtube_info}\nURL: {video_url}"
+                    else:
+                        url_context += f"\n【YouTube動画】\nURL: {video_url}\nこの動画について話してください。"
                 if tiktok_match:
                  tiktok_url = tiktok_match.group(0)
                  info = await get_tiktok_oembed(tiktok_url)
@@ -1625,10 +2012,13 @@ class CharacterBot:
             url_context = (url_context + tiktok_context).strip()
             print(url_context)
 
+            # プロンプトが空になった場合のフォールバック
+            if not prompt and url_context:
+                prompt = "以下の共有された内容について話してください。"
 
             # プロンプトまたは添付ファイルがある場合のみ応答
             # 空メンション時は必ず応答（履歴を読み込むため）
-            if prompt or file_parts or is_empty_mention:
+            if prompt or file_parts or is_empty_mention or url_context:
                 async with message.channel.typing():
                     await self._process_gpt_request(
                         message,
@@ -1642,6 +2032,7 @@ class CharacterBot:
                         timer,
                         interaction=interaction,
                         target_channel=target_channel,
+                        recent_context=recent_context,
                     )
             else:
                 timer.print_summary()
@@ -1659,6 +2050,7 @@ class CharacterBot:
         timer: PerformanceTimer = None,
         interaction: discord.Interaction = None,
         target_channel: discord.Thread = None,
+        recent_context: dict = None,
     ) -> None:
         """GPT APIへのリクエストを処理（改善版計測）"""
 
@@ -1666,9 +2058,9 @@ class CharacterBot:
             timer = PerformanceTimer(self.display_name)
             timer.start_total()
 
-        # 履歴取得数の設定（空メンション時は拡張）
-        db_history_limit = 15 if is_empty_mention else 6
-        discord_history_limit = 20 if is_empty_mention else DISCORD_HISTORY_LIMIT
+        # 履歴取得数の設定
+        needs_db_history = False  # ルーター判定後に更新
+        discord_history_limit = DISCORD_HISTORY_LIMIT
 
         # 推論レベルと検索要否の判定
         with timer.measure_step("推論レベル判定"):
@@ -1682,19 +2074,25 @@ class CharacterBot:
                 has_attachments=bool(file_parts),
                 get_recent_history_func=get_history_func,
                 character_name=self.display_name,
+                recent_context=recent_context,
             )
 
         thinking_level = judgment["level"]
         needs_search = judgment["search"]
         timer_minutes = judgment["minutes"]
         timer_name = judgment["task"]
+        # ルーターの判定に従い、履歴が必要かどうかを決定
         needs_history = judgment["reference"]
+        needs_db_history = needs_history
+        needs_discord_history = needs_history or is_empty_mention
+        needs_rag = bool(judgment.get("rag", False))
 
         prompt_display = (
             "(empty mention)" if is_empty_mention else (prompt[:50] if prompt else "(file only)")
         )
         print(
-            f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, History: {needs_history}, Prompt: {prompt_display}..."
+            f"[{self.display_name}] Level: {thinking_level}, Search: {needs_search}, "
+            f"History: {needs_history}, RAG: {needs_rag}, Prompt: {prompt_display}..."
         )
 
         try:
@@ -1732,7 +2130,18 @@ class CharacterBot:
             if prompt:
                 current_parts.append({"type": "input_text", "text": prompt + syslog})
             elif is_empty_mention:
-                current_parts.append({"type": "input_text", "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
+                current_parts.append(
+                    {
+                        "type": "input_text",
+                        "text": "(ユーザーのメンションのみ - 会話の文脈を理解して応答してください)"
+                        + syslog
+                    }
+                )
+            elif url_context:
+                current_parts.append(
+                    {
+                        "type": "input_text",
+                        "text": "(URLが共有されました。以下の情報について話してください。)"
                         + syslog
                     }
                 )
@@ -1744,15 +2153,16 @@ class CharacterBot:
             parallel_timing = timer.measure_parallel_start("並列データ取得")
 
             async_tasks = []
-            if needs_history:
-                async_tasks.append(self._fetch_db_history(channel_id, db_history_limit))
+            if needs_db_history:
+                async_tasks.append(self._fetch_db_history(channel_id, 6))
             else:
                 async_tasks.append(None)
 
-            if ENABLE_DISCORD_HISTORY and needs_history:
+            if ENABLE_DISCORD_HISTORY and needs_discord_history:
+                dc_limit = DISCORD_HISTORY_LIMIT if needs_history else 3
                 async_tasks.append(
                     self._fetch_discord_history(
-                        message.channel, discord_history_limit, is_empty_mention
+                        message.channel, dc_limit, is_empty_mention
                     )
                 )
             else:
@@ -1761,7 +2171,13 @@ class CharacterBot:
             async_tasks.append(self._fetch_memories(channel_id))
             author = message.author
             async_tasks.append(self._fetch_user_info(author))
+            async_tasks.append(self._fetch_user_memory(author.id))
             async_tasks.append(self._fetch_japan_time())
+            rag_query = prompt if prompt else ""
+            if needs_rag:
+                async_tasks.append(self._fetch_rag_context(rag_query))
+            else:
+                async_tasks.append(None)
 
             valid_tasks = [t for t in async_tasks if t is not None]
             results = await asyncio.gather(*valid_tasks, return_exceptions=True)
@@ -1771,7 +2187,7 @@ class CharacterBot:
             # 結果を展開
             result_idx = 0
             history = []
-            if needs_history:
+            if needs_db_history:
                 db_history_result = results[result_idx]
                 result_idx += 1
                 if isinstance(db_history_result, Exception):
@@ -1781,7 +2197,7 @@ class CharacterBot:
                     history = db_history_result
 
             discord_history = []
-            if ENABLE_DISCORD_HISTORY and needs_history:
+            if ENABLE_DISCORD_HISTORY and needs_discord_history:
                 discord_history_result = results[result_idx]
                 result_idx += 1
                 if isinstance(discord_history_result, Exception):
@@ -1791,9 +2207,7 @@ class CharacterBot:
                 else:
                     discord_history = discord_history_result
                     if discord_history:
-                        max_total = (
-                            discord_history_limit if is_empty_mention else DISCORD_HISTORY_LIMIT
-                        )
+                        max_total = dc_limit if not needs_history else DISCORD_HISTORY_LIMIT
                         history = message_sender.merge_histories(
                             discord_history, history, max_total=max_total
                         )
@@ -1823,10 +2237,31 @@ class CharacterBot:
                 user_info = user_info_result["user_info"]
                 known_users_info = user_info_result["known_users_info"]
 
+            user_memory_result = results[result_idx]
+            result_idx += 1
+            if isinstance(user_memory_result, Exception):
+                print(
+                    f"[{self.display_name}] [PARALLEL] ユーザー記憶取得エラー: {user_memory_result}"
+                )
+                user_memory = None
+            else:
+                user_memory = user_memory_result
+
             current_jst = results[result_idx]
             result_idx += 1
             if isinstance(current_jst, Exception):
                 current_jst = timer_handler.get_japan_time()
+
+            rag_context = ""
+            if needs_rag:
+                rag_context_result = results[result_idx]
+                result_idx += 1
+                if isinstance(rag_context_result, Exception):
+                    print(
+                        f"[{self.display_name}] [PARALLEL] RAG取得エラー: {rag_context_result}"
+                    )
+                else:
+                    rag_context = rag_context_result or ""
 
             # 履歴URL処理
             with timer.measure_step("履歴URL処理"):
@@ -1840,6 +2275,8 @@ class CharacterBot:
                         elif isinstance(history_content, list):
                             for part in history_content:
                                 if isinstance(part, dict) and part.get("type") == "input_text":
+                                    history_texts.append(part.get("text", ""))
+                                elif isinstance(part, dict) and part.get("text"):
                                     history_texts.append(part.get("text", ""))
 
                     if history_texts:
@@ -1865,8 +2302,15 @@ class CharacterBot:
 
             input_contents = history + [{"role": "user", "content": current_parts}]
             known_users_section = f"\n\n{known_users_info}" if known_users_info else ""
+            user_memory_section = f"\n\n[Current User Memory]\n{user_memory}" if user_memory else ""
 
-            enhanced_instruction = f"{self.system_instruction}{user_info}{known_users_section}\n\n[Current Japan Time]\n{current_jst}"
+            enhanced_instruction = (
+                f"{self.system_instruction}\n\n"
+                "[IMPORTANT] Do not confuse facts between different users. "
+                "Use [Current User Memory] for facts about the current user."
+                f"{user_info}{user_memory_section}{known_users_section}\n\n"
+                f"[Current Japan Time]\n{current_jst}"
+            )
 
             if tools:
                 full_system_instruction = (
@@ -1881,6 +2325,13 @@ class CharacterBot:
                     + "\n\nThe following is a summary of conversation history prior to logs. Please refer as needed: "
                     + memories
                 )
+            if rag_context:
+                full_system_instruction = (
+                    full_system_instruction + "\n\n" + rag_context
+                )
+                print(f"[{self.display_name}] RAG: injected into system instruction")
+            elif needs_rag:
+                print(f"[{self.display_name}] RAG: enabled but nothing to inject")
 
             current_config = {
                 "system_instruction": full_system_instruction,
@@ -1889,7 +2340,7 @@ class CharacterBot:
                 "max_output_tokens": 2000,
             }
 
-            # Gemini API 呼び出し
+            # GPT API 呼び出し
             with timer.measure_step("GPT API 呼び出し"):
                 primary_model = self._conversation_model_name()
                 strict_model = getattr(self, "test_model_name", None) is not None
@@ -1905,6 +2356,8 @@ class CharacterBot:
 
             # レスポンス抽出
             with timer.measure_step("レスポンス抽出"):
+                for thought in _extract_thoughts(response):
+                    print(f"[{self.display_name}] [THINKING] {thought}")
                 bot_response_text = await self._extract_response_text(
                     response, input_contents, full_system_instruction, tools
                 )
@@ -1917,19 +2370,34 @@ class CharacterBot:
                 else:
                     save_user_text = prompt
 
-                await asyncio.to_thread(
+                user_history_id = await asyncio.to_thread(
                     db_handler.save_message,
                     self.db_path,
                     current_channel_id,
                     "user",
                     save_user_text,
+                    message.author.display_name,
+                    message.author.id,
                 )
-                await asyncio.to_thread(
+                model_history_id = await asyncio.to_thread(
                     db_handler.save_message,
                     self.db_path,
                     current_channel_id,
-                    "assistant",
+                    "model",
                     bot_response_text,
+                    None,
+                    message.author.id,
+                )
+                asyncio.create_task(
+                    self._index_rag_after_save(
+                        user_history_id=user_history_id,
+                        model_history_id=model_history_id,
+                        channel_id=current_channel_id,
+                        user_text=save_user_text,
+                        model_text=bot_response_text,
+                        author_name=message.author.display_name,
+                        user_id=message.author.id,
+                    )
                 )
 
             print(f"[{self.display_name}] DB saved: {save_user_text}")
@@ -1952,6 +2420,10 @@ class CharacterBot:
             # サマリー出力
             timer.print_summary()
 
+            elapsed = perf_counter() - timer.total_start
+            print(f"[{self.display_name}] 応答完了: ID={message.id}（所要 {elapsed:.2f}秒）")
+            print(f"[{self.display_name}] {'='*60}\n")
+
         except gpt_handler.CharacterError as e:
             # キャラクター別エラーメッセージ
             print(f"[{self.display_name}] CharacterError: {e.character_message}")
@@ -1962,7 +2434,7 @@ class CharacterBot:
             stack_trace_str = "".join(stack_trace)
 
             print(f"\n[{self.display_name}] {'='*60}")
-            print(f"[{self.display_name}] エラーが発生しました")
+            print(f"[{self.display_name}] 応答失敗（エラー）: ID={message.id}")
             print(f"[{self.display_name}] {'='*60}")
             print(f"[{self.display_name}] エラータイプ：{type(e).__name__}")
             print(f"[{self.display_name}] エラーメッセージ：{e}")
@@ -1990,10 +2462,34 @@ class CharacterBot:
         self, response, input_contents: list, full_system_instruction: str, tools: list
     ) -> str:
         """レスポンスからテキストを安全に抽出"""
+
         bot_response_text = None
+
         try:
+            # 方法1: response.text を直接取得
             if response and hasattr(response, "text") and response.text:
                 bot_response_text = response.text
+
+            # 方法2: candidates.content.parts から取得
+            if (
+                not bot_response_text
+                and response
+                and hasattr(response, "candidates")
+                and response.candidates
+            ):
+                first_candidate = response.candidates[0]
+                if hasattr(first_candidate, "content") and first_candidate.content:
+                    if hasattr(first_candidate.content, "parts") and first_candidate.content.parts:
+                        parts_text = []
+                        for part in first_candidate.content.parts:
+                            if getattr(part, "thought", False):
+                                continue
+                            if hasattr(part, "text") and part.text:
+                                parts_text.append(part.text)
+                        if parts_text:
+                            bot_response_text = "".join(parts_text)
+
+            # 空レスポンス時のリトライ
             if not bot_response_text:
                 print(f"[{self.display_name}] Empty, retrying...")
                 retry_config = {
@@ -2002,21 +2498,30 @@ class CharacterBot:
                     "reasoning_level": "minimal",
                     "max_output_tokens": 1200,
                 }
+                retry_model = self._conversation_model_name()
+                retry_strict = getattr(self, "test_model_name", None) is not None
                 retry_response = await gpt_handler.generate_content_with_fallback(
                     client=gpt_async_client,
-                    primary_model=self._conversation_model_name(),
+                    primary_model=retry_model,
                     contents=input_contents,
                     config=retry_config,
+                    strict_primary_model=retry_strict,
                 )
                 if retry_response and hasattr(retry_response, "text") and retry_response.text:
                     bot_response_text = retry_response.text
+                else:
+                    print(f"[{self.display_name}] Retry failed")
+
             if not bot_response_text:
+                print(f"[{self.display_name}] Extract failed")
                 bot_response_text = self.messages.RESPONSE_FAILED
+
         except Exception as extract_error:
             print(
                 f"[{self.display_name}] Extract error: {type(extract_error).__name__}: {extract_error}"
             )
             bot_response_text = self.messages.RESPONSE_FAILED
+
         return bot_response_text
     def _contains_partner_mention(self, text: str) -> bool:
         """応答に相方Botへのメンションが含まれるかチェック"""
@@ -2148,20 +2653,7 @@ class CharacterBot:
         try:
             reaction, _ = await self.client.wait_for("reaction_add", timeout=180.0, check=check)
             if str(reaction.emoji) == "✅":
-                try:
-                    result = await github_issue_handler.create_github_issue(
-                        title,
-                        body,
-                        discord_user_name=user.display_name,
-                        discord_user_id=user.id,
-                    )
-                except github_issue_handler.GitHubBotConfigError as exc:
-                    msg = self.messages.MSG_ISSUE_GITHUB_ERROR.format(detail=str(exc))
-                    if interaction:
-                        await interaction.followup.send(msg)
-                    else:
-                        await channel.send(msg)
-                    return
+                result = await github_issue_handler.create_github_issue(title, body)
                 msg = self.messages.MSG_ISSUE_CREATED.format(url=result["html_url"])
                 if interaction:
                     await interaction.followup.send(msg)

@@ -103,17 +103,17 @@ async def fetch_discord_history(
     include_attachments: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Discordチャンネルから直近のメッセージ履歴を取得し、Gemini API形式に変換
+    Discordチャンネルから直近のメッセージ履歴を取得し、GPT API形式に変換
     
     Args:
         channel: Discord channel object
         limit: 取得するメッセージ数
-        bot_id: BotのユーザーID（Botのメッセージをmodelとして識別）
+        bot_id: BotのユーザーID（Botのメッセージをassistantとして識別）
         max_chars: 1メッセージあたりの最大文字数
         include_attachments: 添付ファイルを含めるかどうか
     
     Returns:
-        list: Gemini API形式の履歴リスト
+        list: GPT API形式の履歴リスト
     """
     try:
         messages = []
@@ -131,7 +131,7 @@ async def fetch_discord_history(
             if not has_content and not has_attachments:
                 continue
             
-            parts = []
+            content_parts = []
             
             if has_content:
                 resolved_content = await resolve_mentions(msg)
@@ -140,18 +140,23 @@ async def fetch_discord_history(
                     resolved_content = resolved_content[:max_chars] + "...(truncated)"
                 
                 if bot_id and msg.author.id == bot_id:
-                    role = "model"
+                    role = "assistant"
                 else:
                     role = "user"
                     resolved_content = f"[{msg.author.display_name}] {resolved_content}"
                 
-                parts.append({"text": resolved_content})
+                content_parts.append({"type": "input_text", "text": resolved_content})
             else:
                 if bot_id and msg.author.id == bot_id:
-                    role = "model"
+                    role = "assistant"
                 else:
                     role = "user"
-                    parts.append({"text": f"[{msg.author.display_name}] (file attached)"})
+                    content_parts.append(
+                        {
+                            "type": "input_text",
+                            "text": f"[{msg.author.display_name}] (file attached)",
+                        }
+                    )
             
             # 添付ファイルの処理
             if include_attachments and has_attachments and attachment_count < MAX_HISTORY_ATTACHMENTS:
@@ -168,7 +173,7 @@ async def fetch_discord_history(
                     if image_attachments:
                         file_parts = await file_handler.process_attachments(image_attachments)
                         if file_parts:
-                            parts.extend(file_parts)
+                            content_parts.extend(file_parts)
                             attachment_count += len(file_parts)
                             print(f"[Discord History] Added {len(file_parts)} attachments (msg ID: {msg.id})")
                 except asyncio.TimeoutError:
@@ -178,7 +183,7 @@ async def fetch_discord_history(
             
             messages.append({
                 "role": role,
-                "parts": parts,
+                "content": content_parts,
                 "_msg_id": msg.id,
                 "_timestamp": msg.created_at
             })
@@ -275,3 +280,83 @@ def get_gacha_names(r="★3",m="○"):
     except FileNotFoundError:
         print("CSVファイルが見つかりません。先にスクレイピングを実行してください。")
         return []
+
+
+async def fetch_last_user_message(
+    channel,
+    bot_id: int,
+    max_chars: int = 500
+) -> Optional[Dict[str, Any]]:
+    """
+    Discordチャンネルから、Bot以外の直近のユーザーメッセージ1件を取得
+    
+    空メンション時に「直前に誰かが共有したコンテンツ」を読み取るために使用。
+    テキストと添付画像（複数枚可）を含む辞書を返す。
+    
+    Args:
+        channel: Discord channel object
+        bot_id: BotのユーザーID（自身を除外するため）
+        max_chars: メッセージテキストの最大文字数
+    
+    Returns:
+        dict or None: {"text": str, "file_parts": list, "author_name": str}
+                        該当メッセージがなければ None
+    """
+    try:
+        async for msg in channel.history(limit=10):
+            # システムメッセージはスキップ
+            if msg.type != discord.MessageType.default and msg.type != discord.MessageType.reply:
+                continue
+            
+            # Bot自身のメッセージはスキップ
+            if msg.author.id == bot_id:
+                continue
+            
+            has_content = msg.content and msg.content.strip() != ""
+            has_attachments = len(msg.attachments) > 0
+            
+            if not has_content and not has_attachments:
+                continue
+            
+            result = {
+                "text": "",
+                "file_parts": [],
+                "author_name": msg.author.display_name
+            }
+            
+            # テキスト内容
+            if has_content:
+                resolved = await resolve_mentions(msg)
+                if len(resolved) > max_chars:
+                    resolved = resolved[:max_chars] + "...(truncated)"
+                result["text"] = resolved
+            
+            # 添付画像の処理（複数枚対応）
+            if has_attachments:
+                try:
+                    supported_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+                    image_attachments = [
+                        att for att in msg.attachments
+                        if att.content_type and att.content_type.split(';')[0] in supported_types
+                    ]
+                    
+                    if image_attachments:
+                        file_parts = await file_handler.process_attachments(image_attachments)
+                        if file_parts:
+                            result["file_parts"] = file_parts
+                            print(f"[Last User Message] Fetched {len(file_parts)} images from {msg.author.display_name}")
+                except Exception as e:
+                    print(f"[WARNING] Last user message attachment error: {e}")
+            
+            # 内容が空でなければ返す
+            if result["text"] or result["file_parts"]:
+                return result
+        
+        return None
+    
+    except discord.Forbidden:
+        print(f"[WARNING] No permission to read history for channel {channel.id}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] fetch_last_user_message error: {e}")
+        return None

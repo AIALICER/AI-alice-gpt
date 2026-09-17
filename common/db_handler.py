@@ -8,6 +8,7 @@
 
 import sqlite3
 import asyncio
+import re
 from typing import Optional
 from .config_base import OPENAI_MODEL, gpt_async_client
 
@@ -22,7 +23,7 @@ def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
         limit: 取得する履歴の件数
     
     Returns:
-        list: GPT API形式の履歴リスト
+        list: Gemini API形式の履歴リスト
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -30,8 +31,8 @@ def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
     
     # 最新のメッセージを古い順（会話の流れ通り）に取得
     cursor.execute('''
-    SELECT role, content FROM (
-        SELECT role, content, timestamp FROM chat_history 
+    SELECT role, content, author_name FROM (
+        SELECT role, content, author_name, timestamp FROM chat_history 
         WHERE channel_id = ? 
         ORDER BY timestamp DESC
         LIMIT ?
@@ -44,17 +45,20 @@ def get_recent_history(db_path: str, channel_id: int, limit: int = 6) -> list:
     # GPT APIが受け取れる辞書リストに変換
     history = []
     for row in rows:
-        role = row["role"]
-        if role == "model":
-            role = "assistant"
+        text = row['content']
+        if row['role'] == 'user' and row['author_name']:
+            text = f"[{row['author_name']}] {text}"
+        role = row['role']
+        if role == 'model':
+            role = 'assistant'
         history.append({
             "role": role,
-            "content": row["content"],
+            "content": text,
         })
     return history
 
 
-def save_message(db_path: str, channel_id: int, role: str, content: str) -> None:
+def save_message(db_path: str, channel_id: int, role: str, content: str, author_name: str | None = None, user_id: int | None = None) -> int:
     """
     メッセージを履歴に保存
     
@@ -63,17 +67,23 @@ def save_message(db_path: str, channel_id: int, role: str, content: str) -> None
         channel_id: チャンネルID
         role: 'user' または 'model'
         content: メッセージ内容
+        author_name: ユーザーの表示名（任意）
+        user_id: Discord ユーザーID（任意）
+
+    Returns:
+        int: 挿入行の history_id
     """
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
     cursor.execute('''
-    INSERT INTO chat_history (channel_id, role, content)
-    VALUES (?, ?, ?)
-    ''', (channel_id, role, content))
-    
+    INSERT INTO chat_history (channel_id, role, content, author_name, user_id)
+    VALUES (?, ?, ?, ?, ?)
+    ''', (channel_id, role, content, author_name, user_id))
+    history_id = int(cursor.lastrowid)
     conn.commit()
     conn.close()
+    return history_id
 
 
 def get_memories(db_path: str, channel_id: int) -> str:
@@ -104,6 +114,57 @@ def get_memories(db_path: str, channel_id: int) -> str:
     return memory
 
 
+def get_user_memory(db_path: str, user_id: int) -> str | None:
+    """
+    指定ユーザーの記憶（要約）を取得
+    
+    Args:
+        db_path: データベースファイルのパス
+        user_id: Discord ユーザーID
+    
+    Returns:
+        str | None: 記憶の内容（なければ None）
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    SELECT content 
+    FROM user_memories 
+    WHERE user_id = ?
+    ''', (user_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    return row['content'] if row else None
+
+
+def save_user_memory(db_path: str, user_id: int, content: str) -> None:
+    """
+    ユーザーごとの記憶を保存または更新
+    
+    Args:
+        db_path: データベースファイルのパス
+        user_id: Discord ユーザーID
+        content: 記憶の内容
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+    INSERT INTO user_memories (user_id, content, timestamp)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id)
+    DO UPDATE SET
+        content = excluded.content,
+        timestamp = excluded.timestamp
+    ''', (user_id, content))
+    
+    conn.commit()
+    conn.close()
+
+
 def clear_db_history(db_path: str, channel_id: int) -> bool:
     """
     指定チャンネルの履歴をデータベースから削除
@@ -119,6 +180,7 @@ def clear_db_history(db_path: str, channel_id: int) -> bool:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute('DELETE FROM chat_history WHERE channel_id = ?', (channel_id,))
+        cursor.execute('DELETE FROM chat_embeddings WHERE channel_id = ?', (channel_id,))
         conn.commit()
         conn.close()
         return True
@@ -151,6 +213,8 @@ async def generate_summary(old_memory: str, new_chat: list) -> str:
     【指示】
     - 重要な変更点や新しい情報（趣味、呼び名、約束など）があれば追記してください。
     - 古くなった情報や矛盾する情報は削除または修正してください。
+    - 各事実は発言者名を明記してください（例：「<発言者名>はゲームを買った」）。
+    - 異なるユーザーの情報を混同しないでください。
     - 3行程度の短い文章にまとめてください。
     """
     try:
@@ -159,7 +223,7 @@ async def generate_summary(old_memory: str, new_chat: list) -> str:
             input=[{"role": "user", "content": prompt}],
             max_output_tokens=200,
         )
-        return f" [Log summary: {(summary_response.output_text or '').strip()}]"
+        return f" [Log summary: {(getattr(summary_response, 'output_text', None) or getattr(summary_response, 'text', '') or '').strip()}]"
     except Exception as e:
         print(f"Summary generation error: {e}")
         return " [Summary failed]"
@@ -167,71 +231,106 @@ async def generate_summary(old_memory: str, new_chat: list) -> str:
 
 async def summarize_and_cleanup(db_path: str, channel_id: int) -> None:
     """
-    10分放置されたら履歴を要約してクリーンアップ
-    
-    Args:
-        db_path: データベースファイルのパス
-        channel_id: チャンネルID
+    10分放置されたら直近履歴を要約して chat_memories を更新する。
+
+    chat_history の生ログは削除しない（永続保存）。
+    Gemini へ渡す会話ログは get_recent_history 側の件数制限を維持する。
     """
     await asyncio.sleep(600)  # 10分待機
-    
+
+    # 要約に使う直近件数（全文を毎回投げない）
+    SUMMARY_HISTORY_LIMIT = 40
+
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     cursor = db.cursor()
-    
+
+    user_id_map = {}
+    new_summary = ""
+
     try:
-        # そのチャンネルのログを一括取得
-        cursor.execute('''
-        SELECT role, content 
-        FROM chat_history 
-        WHERE channel_id = ? 
-        ORDER BY timestamp ASC
-        ''', (channel_id,))
+        # 直近分だけ要約対象にする（古い生ログは DB に残したまま）
+        cursor.execute(
+            '''
+            SELECT role, content, author_name, user_id FROM (
+                SELECT role, content, author_name, user_id, timestamp
+                FROM chat_history
+                WHERE channel_id = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ) ORDER BY timestamp ASC
+            ''',
+            (channel_id, SUMMARY_HISTORY_LIMIT),
+        )
         rows = cursor.fetchall()
-        
+
         if not rows:
             return
-        
+
         history = []
         for row in rows:
-            history.append({
-                "role": "assistant" if row["role"] == "model" else row["role"],
-                "content": row["content"],
-            })
-        
-        # 現在の「記憶」を取得
-        cursor.execute('''
-        SELECT content 
-        FROM chat_memories 
-        WHERE channel_id = ? 
-        ORDER BY timestamp DESC LIMIT 1
-        ''', (channel_id,))
+            history.append(
+                {
+                    "role": row["role"],
+                    "parts": [{"text": row["content"]}],
+                }
+            )
+            if row["user_id"] and row["author_name"]:
+                user_id_map[row["author_name"]] = row["user_id"]
+
+        cursor.execute(
+            '''
+            SELECT content
+            FROM chat_memories
+            WHERE channel_id = ?
+            ORDER BY timestamp DESC LIMIT 1
+            ''',
+            (channel_id,),
+        )
         old_memory_row = cursor.fetchone()
-        old_memory = old_memory_row['content'] if old_memory_row else "No memories yet."
-        
-        # GPTで要約
+        old_memory = old_memory_row["content"] if old_memory_row else "No memories yet."
+
         new_summary = await generate_summary(old_memory, history)
-        
-        # 記憶テーブルを更新
-        cursor.execute("""
-        INSERT INTO chat_memories (channel_id, content, timestamp)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(channel_id) 
-        DO UPDATE SET 
-            content = excluded.content, 
-            timestamp = excluded.timestamp
-        """, (channel_id, new_summary))
-        
-        cursor.execute("DELETE FROM chat_history WHERE channel_id = ?", (channel_id,))
-        
+
+        cursor.execute(
+            """
+            INSERT INTO chat_memories (channel_id, content, timestamp)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(channel_id)
+            DO UPDATE SET
+                content = excluded.content,
+                timestamp = excluded.timestamp
+            """,
+            (channel_id, new_summary),
+        )
+
         db.commit()
-        print(f"Channel {channel_id}: Summarized logs and cleaned up database.")
-        
+        print(
+            f"Channel {channel_id}: Summarized recent logs into chat_memories "
+            f"(kept chat_history, used last {len(rows)} rows)."
+        )
+
     except Exception as e:
         print(f"Error during cleanup: {e}")
         db.rollback()
     finally:
         db.close()
+
+    if user_id_map and new_summary:
+        if new_summary.startswith(" [Log summary:"):
+            inner_summary = new_summary[15:-1]
+        else:
+            inner_summary = new_summary
+
+        sentences = [s.strip() for s in re.split(r"[。\n]", inner_summary) if s.strip()]
+        for author_name, user_id in user_id_map.items():
+            user_facts = [s for s in sentences if s.startswith(author_name)]
+            if user_facts:
+                fact_text = "。".join(user_facts) + "。"
+                try:
+                    save_user_memory(db_path, user_id, fact_text)
+                except Exception as e:
+                    print(f"Error saving user memory for {user_id}: {e}")
 
 
 def upsert_user(db_path: str, user_id: int, display_name: str, account_name: str) -> None:
@@ -296,7 +395,7 @@ def get_all_users_info(db_path: str) -> str:
     """
     登録済み全ユーザーの情報をシステムインストラクション用テキストで返す
 
-    GPT に「誰をどうメンションするか」を伝えるために使用する。
+    Gemini に「誰をどうメンションするか」を伝えるために使用する。
     ユーザーが一人も登録されていない場合は空文字列を返す。
 
     Args:

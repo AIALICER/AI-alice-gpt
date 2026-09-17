@@ -2,7 +2,7 @@
 
 # 天童アリス Discord Bot
 
-ブルーアーカイブのキャラクターになりきって会話するDiscord Botです。OpenAI GPT APIを使用しています。
+ブルーアーカイブのキャラクターになりきって会話するDiscord Botです。OpenAI GPT API（既定: `gpt-6-astra`）を使用しています。
 
 ## 機能
 
@@ -18,6 +18,8 @@
 - **Bot間会話**: 複数Bot間での相互会話機能
 - **URL参照**: メッセージや履歴に含まれるURL本文を取得して回答に活用
 - **GPTフォールバック**: APIキー・モデル切替とリトライで応答継続
+- **埋め込みRAG**: 過去会話の意味検索（OpenAI embeddings）
+- **VC会話**: ボイスチャンネル音声→Whisper文字起こし→GPT返答
 - **ゲーム連携（アリスのみ）**: Twitch人気ゲーム表示、Steamセール照合、ゲーム説明生成
 
 ## 対応キャラクター
@@ -108,8 +110,9 @@ Botをメンションして会話を開始：
 ### 使用技術
 - **discord.py**: Discord API連携
 - **openai**: OpenAI GPT API連携
-  - メイン: `OPENAI_MODEL`（デフォルト: `gpt-4o-mini`）
-  - フォールバック: `OPENAI_FALLBACK_MODEL`（デフォルト: `gpt-4.1-mini`）
+  - メイン: `OPENAI_MODEL`（デフォルト: `gpt-6-astra`）
+  - フォールバック: `OPENAI_FALLBACK_MODEL`（デフォルト: `gpt-4o-mini`）
+  - 埋め込み RAG: `OPENAI_EMBEDDING_MODEL`（デフォルト: `text-embedding-3-small`）
 - **aiohttp**: 非同期ファイル処理
 - **beautifulsoup4**: Webスクレイピング（ニュース取得）
 - **requests**: Twitch / Steam API連携

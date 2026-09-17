@@ -81,17 +81,16 @@ async def generate_content_with_fallback(
     strict_primary_model: bool = False,
 ):
     """レート制限/タイムアウト時に自動フォールバックしてGPT応答を返す。"""
-    execution_plan = [
-        (gpt_async_client, OPENAI_MODEL),
-        (gpt_async_client, OPENAI_FALLBACK_MODEL),
-    ]
+    _ = needs_search
+    primary = primary_model or OPENAI_MODEL
+    fallback = OPENAI_FALLBACK_MODEL
+    execution_plan = [(gpt_async_client, primary)]
+    if not strict_primary_model and fallback and fallback != primary:
+        execution_plan.append((gpt_async_client, fallback))
     if gpt_async_client_fallback:
-        execution_plan.extend(
-            [
-                (gpt_async_client_fallback, OPENAI_MODEL),
-                (gpt_async_client_fallback, OPENAI_FALLBACK_MODEL),
-            ]
-        )
+        execution_plan.append((gpt_async_client_fallback, primary))
+        if not strict_primary_model and fallback and fallback != primary:
+            execution_plan.append((gpt_async_client_fallback, fallback))
 
     last_exception = None
     for target_client, model_name in execution_plan:
@@ -219,13 +218,37 @@ def determine_level_and_search_rule_based(prompt: str):
     if any(kw in prompt_lower for kw in time_responses):
         return None
     if len(prompt) <= 20 and any(p in prompt_lower for p in simple_greetings):
-        return {"level": "low", "search": False, "minutes": 0, "task": "null"}
+        return {
+            "level": "low",
+            "search": False,
+            "minutes": 0,
+            "task": "null",
+            "rag": False,
+        }
     if len(prompt) <= 15 and any(p in prompt_lower for p in simple_responses):
-        return {"level": "low", "search": False, "minutes": 0, "task": "null"}
+        return {
+            "level": "low",
+            "search": False,
+            "minutes": 0,
+            "task": "null",
+            "rag": False,
+        }
     if any(kw in prompt_lower for kw in code_keywords):
-        return {"level": "high", "search": False, "minutes": 0, "task": "null"}
+        return {
+            "level": "high",
+            "search": False,
+            "minutes": 0,
+            "task": "null",
+            "rag": False,
+        }
     if any(kw in prompt_lower for kw in search_required_keywords):
-        return {"level": "high", "search": True, "minutes": 0, "task": "null"}
+        return {
+            "level": "high",
+            "search": True,
+            "minutes": 0,
+            "task": "null",
+            "rag": False,
+        }
     return None
 
 
@@ -235,6 +258,7 @@ async def determine_level_and_search(
     has_attachments: bool = False,
     get_recent_history_func=None,
     character_name: str = "Bot",
+    recent_context: dict | None = None,
 ) -> dict:
     rule_result = determine_level_and_search_rule_based(prompt)
     if rule_result is not None:
@@ -252,6 +276,10 @@ async def determine_level_and_search(
         for msg in history:
             role = "User" if msg["role"] == "user" else character_name
             text = msg.get("content", "")
+            if isinstance(text, list):
+                text = " ".join(
+                    p.get("text", "") for p in text if isinstance(p, dict)
+                )
             if text is None:
                 text = ""
             if len(text) > 100:
@@ -259,7 +287,20 @@ async def determine_level_and_search(
             history_lines.append(f"{role}: {text}")
         history_text = "\n".join(history_lines)
 
-    router_prompt = f"""You are an AI chatbot judgment system. Please judge 3 items.
+    recent_section = "(None)"
+    if recent_context:
+        recent_parts = []
+        if recent_context.get("text"):
+            recent_parts.append(f"Text: {recent_context['text']}")
+        if recent_context.get("file_parts"):
+            count = len(recent_context["file_parts"])
+            recent_parts.append(f"Images attached: {count} image(s)")
+        if recent_context.get("author_name"):
+            recent_parts.append(f"Author: {recent_context['author_name']}")
+        if recent_parts:
+            recent_section = "\n".join(recent_parts)
+
+    router_prompt = f"""You are an AI chatbot judgment system. Please judge 5 items.
 
 ## Judgment 1: Inference Level
 - **low**: Simple greetings, responses, casual chat
@@ -278,31 +319,48 @@ async def determine_level_and_search(
 ## Judgment 4: Reference Necessity
 - **true**: The message refers to previous turns using pronouns or implicit references. (e.g., "Why?", "Explain it more", "Fix that code", "What about him?", "I see")
 - **false**: The message is self-contained and can be understood without any history. (e.g., "Hello", "How is the weather?", "Write a Python code for a calculator")
+- **false**: When the user only mentions the bot with no text but recent channel activity shows shared content (images/text), the user likely wants the bot to look at that NEW shared content, not old history.
+## Judgment 5: RAG / Long-term Memory Search
+- **true**: The user asks to recall older past conversations, facts, preferences, promises, or topics that may not be in the immediate recent turns. (e.g., "前に話したやつ", "覚えてる？", "前に言ってたゲーム", "私の好きなもの何だっけ", "before we talked about...")
+- **false**: Greetings, self-contained questions, requests that only need the latest turns (Judgment 4), external web search, timers, or new topics with no past recall intent.
+- Note: Judgment 4 = recent turn context. Judgment 5 = semantic search over older stored logs (can be other channels/users). They can both be true.
 ## Conversation History
 {history_text if history_text else "(None)"}
+
+## Recent Channel Activity
+{recent_section}
 
 ## User Input
 {prompt if prompt else "(No text, file attached)"}
 {"*File attached" if has_attachments else ""}
 
 ## Output Format (strict)
-level:low/medium/high,search:true/false,minutes:int,task:str,reference:true/false
+level:low/medium/high,search:true/false,minutes:int,task:str,reference:true/false,rag:true/false
 
-Example: level:high,search:false,minutes:10,task:meeting,reference:true
-Example: level:medium,search:true,minutes:0,task:null,reference:false"""
+Example: level:high,search:false,minutes:10,task:meeting,reference:true,rag:false
+Example: level:medium,search:true,minutes:0,task:null,reference:false,rag:false
+Example: level:medium,search:false,minutes:0,task:null,reference:false,rag:true"""
 
     try:
         step_start = time.time()
+        # ルーターはフォールバック（安価）モデルを優先
         response = await generate_content_with_fallback(
             client=gpt_async_client,
-            primary_model=OPENAI_MODEL,
+            primary_model=OPENAI_FALLBACK_MODEL,
             contents=[{"role": "user", "content": router_prompt}],
-            config={"max_output_tokens": 60, "temperature": 0.1},
+            config={"max_output_tokens": 80, "temperature": 0.1},
         )
         print(f"[GPT] [TIMING] ルーターAPI呼び出し: {time.time() - step_start:.2f}秒")
 
         result = response.text.strip().lower()
-        level, search, minutes, task, reference = "medium", False, 0, "null", False
+        level, search, minutes, task, reference, rag = (
+            "medium",
+            False,
+            0,
+            "null",
+            False,
+            False,
+        )
 
         if "level:" in result:
             level = result.split("level:")[1].split(",")[0].strip()
@@ -311,12 +369,14 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
         if "minutes:" in result:
             try:
                 minutes = float(result.split("minutes:")[1].split(",")[0].strip())
-            except:
+            except Exception:
                 minutes = 0
         if "task:" in result:
             task = result.split("task:")[1].split(",")[0].strip()
         if "reference:" in result:
             reference = result.split("reference:")[1].split(",")[0].strip() == "true"
+        if "rag:" in result:
+            rag = result.split("rag:")[1].split(",")[0].strip() == "true"
 
         return {
             "level": level,
@@ -324,6 +384,7 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
             "minutes": minutes,
             "task": task,
             "reference": reference,
+            "rag": rag,
         }
     except Exception as e:
         print(f"[API] Err: {type(e).__name__}")
@@ -333,4 +394,5 @@ Example: level:medium,search:true,minutes:0,task:null,reference:false"""
             "minutes": 0,
             "task": "null",
             "reference": False,
+            "rag": False,
         }
